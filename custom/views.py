@@ -45,8 +45,8 @@ TreatmentAccount, PosDaud, ItemDept, DepositAccount, PrepaidAccount, ItemDiv, Sy
 PackageHdr,PackageDtl,Paytable,Multistaff,ItemBatch,Stktrn,ItemUomprice,Holditemdetail,CreditNote,
 CustomerClass,ItemClass,Tmpmultistaff,Tmptreatment,ExchangeDtl,ItemUom,ItemHelper,PrepaidAccountCondition,
 City, State, Country, Stock,PayGroup,Tempcustsign,Item_MembershipPrice,TreatmentPackage,PrepaidOpenCondition,
-ItemBrand,CustomerPoint,TempprepaidAccountCondition,TempcartprepaidAccCond)
-from cl_app.models import ItemSitelist, SiteGroup, TmpTreatmentSession,TmpItemHelperSession
+ItemBrand,CustomerPoint,TempprepaidAccountCondition,TempcartprepaidAccCond,ItemBatchSno)
+from cl_app.models import ItemSitelist, SiteGroup, TmpTreatmentSession,TmpItemHelperSession,Usagelevel
 from cl_table.serializers import (PostaudSerializer,StaffsAvailableSerializer,PosdaudSerializer,TmpItemHelperSerializer,
 PrepaidOpenConditionSerializer)
 from datetime import date, timedelta, datetime
@@ -746,7 +746,7 @@ class RoomViewset(viewsets.ModelViewSet):
 
         site = fmspw[0].loginsite
         if not site:
-            result = {'status': state,"message":"Users Item Site is not mapped!!",'error': True} 
+            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Users Item Site is not mapped!!",'error': True} 
             return Response(result, status=status.HTTP_400_BAD_REQUEST) 
        
         queryset = Room.objects.filter(isactive=True,Site_Codeid=site,displayname__isnull=False).order_by('-id')
@@ -1225,7 +1225,10 @@ def round_calc(value, site):
     # 1.48 val
 
     v = str(value).split('.')
-    val = float(v[0]+"."+v[1][:2])
+    val = float(v[0])
+    if len(v) > 1:
+        val = float(v[0]+"."+v[1][:2])
+    # val = float(v[0]+"."+v[1][:2])
     fractional = math.modf(float(val))
     # print(fractional,"fractional")
     data = "{:.2f}".format(float(fractional[0]))
@@ -1764,6 +1767,50 @@ def truncate(f, n):
     # val = numberWithoutRounding(res)
     return res
 
+def validate_tdfirst_usagestock(done,site,item_code):
+    session = done
+    if item_code:
+        valuedata = 'TRUE'
+
+        sys_ids = Systemsetup.objects.filter(title='Stock Available',
+        value_name='Stock Available',isactive=True).first() 
+        if sys_ids and sys_ids.value_data:
+            valuedata = str(sys_ids.value_data).upper()
+        
+       
+        usagelevel_ids = Usagelevel.objects.filter(service_code=str(item_code),
+        isactive=True).order_by('-pk')  
+
+        if usagelevel_ids:
+            for i in usagelevel_ids:
+                if int(i.qty) > 0:
+                    qtytodeduct = int(i.qty) * session
+                    flag = False
+
+                    uomprice_ids = ItemUomprice.objects.filter(item_code=i.item_code[:-4],
+                    item_uom2=i.uom,uom_unit__gt=0,isactive=True).filter(~Q(item_uom=i.uom)).first()
+                    if uomprice_ids:
+                        obatchids = ItemBatch.objects.filter(site_code=site.itemsite_code,item_code=str(i.item_code[:-4]),
+                        uom=uomprice_ids.item_uom).order_by('pk').last() 
+                        if obatchids and int(obatchids.qty) <= 0:
+                            flag = False
+                        else:
+                            if obatchids and int(obatchids.qty) > 0:
+                                flag = True
+
+                    batchids = ItemBatch.objects.filter(site_code=site.itemsite_code,item_code=str(i.item_code[:-4]),
+                    uom=i.uom).order_by('pk').last() 
+                    if batchids:
+                        batch_qty = int(batchids.qty)
+                    else:
+                        batch_qty = 0   
+
+                    if valuedata == 'TRUE':
+                        if int(qtytodeduct) > int(batch_qty):
+                            if flag == False:
+                                raise Exception('Inventory Onhand is not available for this service TD usagelevel UOM retail product') 
+                 
+    return True
 
        
 
@@ -2562,6 +2609,9 @@ class itemCartViewset(viewsets.ModelViewSet):
 
             # cartvalue = get_cartid(self, request, cust_obj)
 
+            autotdfor_setup = Systemsetup.objects.filter(title='autoTDForAlacarte',
+            value_name='autoTDForAlacarte',isactive=True).first()
+
             for idx, req in enumerate(request.data, start=1):
                 serializer = self.get_serializer(data=req)
                 cart_date = timezone.now().date()
@@ -2636,6 +2686,10 @@ class itemCartViewset(viewsets.ModelViewSet):
                 if not stock_obj:
                     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Stock ID does not exist!!",'error': True} 
                     return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
+
+                if int(stock_obj.item_div) == 3 and stock_obj.item_type != 'PACKAGE' and autotdfor_setup and autotdfor_setup.value_data == 'True' and 'is_service' in req and req['is_service'] == True:   
+                    done = 1 ; item_code = str(stock_obj.item_code)+"0000"
+                    usage_val = validate_tdfirst_usagestock(done,site,item_code) 
 
                 gst = GstSetting.objects.filter(item_desc='GST',isactive=True).first()
             
@@ -2764,6 +2818,7 @@ class itemCartViewset(viewsets.ModelViewSet):
                         "message":bmessage,'error': True} 
                         return Response(result, status=status.HTTP_400_BAD_REQUEST) 
                 
+                
 
                 
                 if serializer.is_valid():
@@ -2820,8 +2875,8 @@ class itemCartViewset(viewsets.ModelViewSet):
 
                         sys_ids = Systemsetup.objects.filter(title='Stock Available',
                         value_name='Stock Available',isactive=True).first() 
-                        if sys_ids:
-                            valuedata = sys_ids.value_data
+                        if sys_ids and sys_ids.value_data:
+                            valuedata = str(sys_ids.value_data).upper()
                             #raise Exception('Retail Product System Setup setting for Stock Available does not exist') 
 
                         # ser_valuedata = 'True'
@@ -3186,8 +3241,7 @@ class itemCartViewset(viewsets.ModelViewSet):
                                 salesamt="{:.2f}".format(float(newsalesamt)),salescommpoints=newsalspts)
                                          
                     
-                    autotdfor_setup = Systemsetup.objects.filter(title='autoTDForAlacarte',
-                    value_name='autoTDForAlacarte',isactive=True).first()
+                    
                     if cart.type == 'Deposit' and int(stock_obj.item_div) == 3 and stock_obj.item_type != 'PACKAGE' and autotdfor_setup and autotdfor_setup.value_data == 'True' and 'is_service' in req and req['is_service'] == True:
                         # print("iff")
                         empobj= fmspw[0].Emp_Codeid
@@ -5135,64 +5189,64 @@ class itemCartViewset(viewsets.ModelViewSet):
 
                         # print(itemcart.quantity,itemcart.price,itemcart.total_price,itemcart.discount_price,itemcart.trans_amt,itemcart.deposit,"price")
                     
-                        # tmptreat_ids = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk')
-                        # # print(tmptreat_ids,"tmptreat_ids") 
-                        # if tmptreat_ids:
-                        #     # print("iff")
-                        #     dprice = discount_price
-                        #     # print(dprice,"dprice")
-                        #     auto = tmptreat_ids[0].trmt_is_auto_proportion
-                        #     if dprice:
-                        #         if auto == False:
-                        #             number = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk').count()
-                        #             price = dprice * number
+                        tmptreat_ids = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk')
+                        # print(tmptreat_ids,"tmptreat_ids") 
+                        if tmptreat_ids:
+                            # print("iff")
+                            dprice = discount_price
+                            # print(dprice,"dprice")
+                            auto = tmptreat_ids[0].trmt_is_auto_proportion
+                            if dprice:
+                                if auto == False:
+                                    number = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk').count()
+                                    price = dprice * number
 
-                        #             otmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk')
-                        #             for ot in otmp:
-                        #                 ot.unit_amount = "{:.2f}".format(float(dprice))
-                        #                 ot.price = "{:.2f}".format(float(price))
-                        #                 ot.save()
-                        #                 # print(ot.unit_amount,"kk")
-                        #             ftmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=True).order_by('pk')
-                        #             for fi in ftmp:
-                        #                 fi.unit_amount = 0.00
-                        #                 fi.price = 0.00
-                        #                 fi.save()
-                        #                 # print(fi.unit_amount,"f.unit_amount")
+                                    otmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk')
+                                    for ot in otmp:
+                                        ot.unit_amount = "{:.2f}".format(float(dprice))
+                                        ot.price = "{:.2f}".format(float(price))
+                                        ot.save()
+                                        # print(ot.unit_amount,"kk")
+                                    ftmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=True).order_by('pk')
+                                    for fi in ftmp:
+                                        fi.unit_amount = 0.00
+                                        fi.price = 0.00
+                                        fi.save()
+                                        # print(fi.unit_amount,"f.unit_amount")
 
-                        #         elif auto == True: 
-                        #             no = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk').count()
-                        #             price = dprice * no
-                        #             number = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk').count()
+                                elif auto == True: 
+                                    no = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk').count()
+                                    price = dprice * no
+                                    number = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk').count()
                                     
-                        #             d_price = price / number
+                                    d_price = price / number
 
-                        #             l_ids = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk').last()
+                                    l_ids = Tmptreatment.objects.filter(itemcart=itemcart).order_by('pk').last()
 
-                        #             otmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk')
+                                    otmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=False).order_by('pk')
                                     
-                        #             for ol in otmp:
-                        #                 ol.unit_amount = "{:.2f}".format(float(d_price))
-                        #                 ol.price = "{:.2f}".format(float(price))
-                        #                 ol.save()
-                        #                 # print(ol.unit_amount,"ol.unit_amount")
+                                    for ol in otmp:
+                                        ol.unit_amount = "{:.2f}".format(float(d_price))
+                                        ol.price = "{:.2f}".format(float(price))
+                                        ol.save()
+                                        # print(ol.unit_amount,"ol.unit_amount")
 
-                        #             oftmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=True).order_by('pk').exclude(pk=l_ids.pk)
-                        #             for olf in oftmp:
-                        #                 olf.unit_amount = "{:.2f}".format(float(d_price))
-                        #                 olf.price = 0
-                        #                 olf.save()
+                                    oftmp = Tmptreatment.objects.filter(itemcart=itemcart,isfoc=True).order_by('pk').exclude(pk=l_ids.pk)
+                                    for olf in oftmp:
+                                        olf.unit_amount = "{:.2f}".format(float(d_price))
+                                        olf.price = 0
+                                        olf.save()
 
-                        #             amt = "{:.2f}".format(float(d_price))   
-                        #             lval = price - (float(amt) * (number -1))
+                                    amt = "{:.2f}".format(float(d_price))   
+                                    lval = price - (float(amt) * (number -1))
 
-                        #             fltmp = Tmptreatment.objects.filter(itemcart=itemcart,pk=l_ids.pk).order_by('pk')
+                                    fltmp = Tmptreatment.objects.filter(itemcart=itemcart,pk=l_ids.pk).order_by('pk')
                                     
-
-                        #             for fl in fltmp:
-                        #                 fl.unit_amount = "{:.2f}".format(float(lval))
-                        #                 fl.price = 0
-                        #                 fl.save()
+                                    if fltmp:
+                                        for fl in fltmp:
+                                            fl.unit_amount = "{:.2f}".format(float(lval))
+                                            fl.price = 0 if l_ids and l_ids.isfoc == True else "{:.2f}".format(float(price))
+                                            fl.save()
 
                 
                 #hold reason,hold qty,foc reason
@@ -5967,6 +6021,8 @@ class itemCartViewset(viewsets.ModelViewSet):
     authentication_classes=[ExpiringTokenAuthentication],name='qtyupdate')
     def qtyupdate(self, request, pk=None):
         try:
+            fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True).first()
+            site = fmspw.loginsite
             itemcart = self.get_object(pk)
             if itemcart.type in ['Top Up','Sales','Exchange']:
                 result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Topup/Sales/Exchange Cart Edit is not applicable!!",'error': True} 
@@ -6015,6 +6071,20 @@ class itemCartViewset(viewsets.ModelViewSet):
                 else:
                     ItemCart.objects.filter(id=itemcart.id).update(quantity=qty,
                     total_price=total_price,trans_amt=trans_amt,deposit=deposit)
+
+                if itemcart.quantity and int(itemcart.itemcodeid.item_div) == 1:
+                    if itemcart.batch_sno:
+                        batchso_ext_ids = ItemBatchSno.objects.filter(availability=True,site_code=site.itemsite_code,
+                        item_code=itemcart.itemcodeid.item_code,uom=itemcart.item_uom.uom_code).order_by('pk','batch_sno')
+                        # print(batchso_ext_ids,"batchso_ext_ids") 
+                        # print(len(batchso_ext_ids),"len(batchso_ext_ids)")
+                        # print(itemcart.quantity,"itemcart.quantity")
+                        if (batchso_ext_ids and qty > len(batchso_ext_ids)) or not batchso_ext_ids:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,
+                            "message":"ItemBatchSno Serial Number does not exist!!",'error': True} 
+                            return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
+                
+
 
                 result = {'status': status.HTTP_200_OK,"message":"Qty Updated Sucessfully",'error': False}
                 return Response(result, status=status.HTTP_200_OK)
@@ -6731,34 +6801,37 @@ class ReceiptPdfSend(APIView):
             display.start()
             html = template.render(data)
             options = {
-                'margin-top': '.25in',
-                'margin-right': '.25in',
-                'margin-bottom': '.25in',
-                'margin-left': '.25in',
+                'margin-top': '.20in',
+                'margin-right': '.20in',
+                'margin-bottom': '.20in',
+                'margin-left': '.20in',
                 'encoding': "UTF-8",
                 'no-outline': None,
+                'enable-local-file-access': ""
             }
             
             # existing = os.listdir(settings.PDF_ROOT)
-            dst ="customer_receipt_" + str(str(hdr[0].sa_transacno_ref)) + ".pdf"
+            dst ="customer_receipt_" + str(hdr[0].sa_transacno_ref) + ".pdf"
 
             # src = settings.PDF_ROOT + existing[0] 
             # dst = settings.PDF_ROOT + dst 
                 
             # os.rename(src, dst) 
             p=pdfkit.from_string(html,False,options=options)
+            sa_transacno_ref = hdr[0].sa_transacno_ref
             
             
-            smpt_ids = SmtpSettings.objects.filter(email_subject='Customer Invoice',isactive=True).order_by('pk').first()
-            subject = smpt_ids.email_subject if smpt_ids and smpt_ids.email_subject else "Customer Invoice"
+            smpt_ids = SmtpSettings.objects.filter(email_subject='Customer Invoice',site_code=site.itemsite_code,isactive=True).order_by('pk').first()
+            subject = smpt_ids.email_subject+" "+sa_transacno_ref if smpt_ids and smpt_ids.email_subject else "Customer Invoice"+" "+sa_transacno_ref
             to = hdr[0].sa_custnoid.cust_email
             cust_name = hdr[0].sa_custnoid.cust_name
+            
 
              
             if smpt_ids and smpt_ids.email_content:
-                html_message = smpt_ids.email_content.format(cust_name,sa_transacno)
+                html_message = smpt_ids.email_content.format(cust_name,sa_transacno_ref)
             else:
-                html_message = '''Dear {0},\nKindly Find your receipt bill no {1}.\nThank You,'''.format(cust_name,sa_transacno)
+                html_message = '''Dear {0},\nKindly Find your receipt bill no {1}.\nThank You,'''.format(cust_name,sa_transacno_ref)
 
             
             plain_message = strip_tags(html)
@@ -6995,10 +7068,18 @@ class PosPackagedepositViewset(viewsets.ModelViewSet):
                             raise Exception('PosPackagedeposit id Does not exist') 
 
                         pos_code = str(pos.code)
-                        itm_code = pos_code[:-4]
+                        
+                        v = pos_code[-4:]
+                        # print(v,type(v),"v")
+                        if v == '0000':
+                            itm_code = pos_code[:-4]
+                        else:
+                            itm_code = pos_code
+
                         itmstock = Stock.objects.filter(item_code=itm_code).first()
                         if not itmstock:
-                            msg = "{0} does not exist".format(str(itmstock.item_name))
+                            # msg = "{0} does not exist".format(str(itmstock.item_name))
+                            msg = "{0} does not exist".format(str(pos.description))
                             result = {'status': status.HTTP_400_BAD_REQUEST,"message":msg,'error': True}
                             return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
                 
@@ -7459,8 +7540,18 @@ class ExchangeProductConfirmAPIView(generics.CreateAPIView):
 
                             #[HoldItemDetail]
                             if c.holditemqty and int(c.holditemqty) > 0:  
+                                if int(c.holditemqty) > 0:
+                                    holdstatus = "OPEN"
+                                elif int(c.holditemqty) == 0:
+                                    holdstatus = "Close"
+                                else:
+                                    holdstatus = "Close"
+
+
                                 product_issues_no = str(con_obj.control_prefix)+str(con_obj.Site_Codeid.itemsite_code)+str(con_obj.control_no)
                                 
+                                # holditemqty=0,status="Close",
+
                                 hold = Holditemdetail(itemsite_code=site.itemsite_code,sa_transacno=sa_transacno,
                                 transacamt=c.trans_amt,itemno=c.itemcodeid.item_code+"0000",
                                 hi_staffno=','.join([v.emp_code for v in salesstaff if v.emp_code]),
@@ -7468,7 +7559,7 @@ class ExchangeProductConfirmAPIView(generics.CreateAPIView):
                                 hi_qty=c.quantity,hi_discamt=0,hi_discpercent=0,hi_discdesc=None,
                                 hi_staffname=','.join([v.display_name for v in salesstaff if v.display_name]),
                                 hi_lineno=c.lineno,hi_uom=c.item_uom.uom_code,hold_item=False,hi_deposit=c.deposit,
-                                holditemqty=0,status="Close",sa_custno=cust_obj.cust_code,
+                                holditemqty=c.holditemqty,status=holdstatus,sa_custno=cust_obj.cust_code,
                                 sa_custname=cust_obj.cust_name,history_line=1,hold_type=c.holdreason.hold_desc if c.holdreason and c.holdreason.hold_desc else None,
                                 product_issues_no=product_issues_no)
                                 hold.save()
@@ -7864,7 +7955,7 @@ class SmtpSettingsViewset(viewsets.ModelViewSet):
         try:
             serializer_class = SmtpSettingsSerializer
             queryset = self.filter_queryset(self.get_queryset())
-            total = len(queryset)
+            total = len(queryset) if queryset else 0
             state = status.HTTP_200_OK
             message = "Listed Succesfully"
             error = False
@@ -8863,6 +8954,7 @@ class CartPopupViewset(viewsets.ModelViewSet):
                                 raise Exception('wp Should not be empty') 
 
                         if s['sales'] == True:
+                            # print(float(s['sales_amount']),"float(s['sales_amount'])")
                             if s['sales_percentage'] == "":
                                 raise Exception('Sales Percentage Should not be empty') 
                             if s['sales_amount'] == "":
@@ -8870,6 +8962,7 @@ class CartPopupViewset(viewsets.ModelViewSet):
                             if s['sp'] == "":
                                 raise Exception('sp Should not be empty') 
                             tsales_amount += float(s['sales_amount'])
+                            # print(tsales_amount,"tsales_amount")
                             tsales_percentage += float(s['sales_percentage'])
 
                     # print(tsales_percentage,"tsales_percentage")
@@ -8877,8 +8970,9 @@ class CartPopupViewset(viewsets.ModelViewSet):
                         if tsales_percentage < float(itemcart.ratio) or tsales_percentage > float(itemcart.ratio):
                             m_sg = "Sales Percentage sum should be equal to Cart Ratio {0} % cart item {1} & lineno {2} .".format(str(float(itemcart.ratio)),str(itemcart.itemdesc),str(itemcart.lineno))
                             raise Exception(m_sg) 
-
-                        if tsales_amount < float(itemcart.trans_amt) or tsales_amount > float(itemcart.trans_amt):
+                        # print(round(tsales_amount),"tsales_amount")
+                        # print(float(itemcart.trans_amt),"itemcart.trans_amt")
+                        if round(tsales_amount) < float(itemcart.trans_amt) or round(tsales_amount) > float(itemcart.trans_amt):
                             mt_sg = "Sales Amount sum should be equal to Cart Transac Amt $ {0} cart item {1} & lineno {2} .".format(str(float(itemcart.trans_amt)),str(itemcart.itemdesc),str(itemcart.lineno))
                             raise Exception(mt_sg)     
 
@@ -9162,6 +9256,10 @@ class CartServiceCourseViewset(viewsets.ModelViewSet):
             # if int(request.data['free_sessions']) > int(request.data['quantity']) or int(request.data['free_sessions']) > request.data['treatment_no']:
             #     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Free Sessions should not greater than quantity/treatment_no ",'error': False}
             #     return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
+
+            if int(request.data['total_price']) <= 0 and int(request.data['discount_price']) > 0:
+                result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Tota Price cannot be 0",'error': False}
+                return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
             
             if 'sessiondone' in request.data and request.data['sessiondone'] > 0:
                 help_ids = TmpItemHelper.objects.filter(itemcart=cart).exclude(tmptreatment__isnull=True).order_by('pk')
@@ -10226,7 +10324,9 @@ class CartPrepaidViewset(viewsets.ModelViewSet):
         except Exception as e:
             invalid_message = str(e)
             return general_error_response(invalid_message)     
-               
+
+
+
 
 class CourseTmpItemHelperViewset(viewsets.ModelViewSet):
     authentication_classes = [ExpiringTokenAuthentication]
@@ -10236,6 +10336,8 @@ class CourseTmpItemHelperViewset(viewsets.ModelViewSet):
 
     def list(self, request):
         try:
+            fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True)
+            site = fmspw[0].loginsite
             # if request.GET.get('treatmentid',None) is None:
             #     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Please give Treatment Record ID",'error': False}
             #     return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
@@ -10287,7 +10389,9 @@ class CourseTmpItemHelperViewset(viewsets.ModelViewSet):
                     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Insufficient Amount in Treatment Done not allow, Please Topup !!",'error': True} 
                     return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
             
-            
+            item_code = str(cartobj.itemcodeid.item_code)+"0000"
+            usage_val = validate_tdfirst_usagestock(done,site,item_code)
+
             arrtreatmentid = [i.pk for i in tmp_treatids]
             # print(arrtreatmentid,"arrtreatmentid")
             for t in arrtreatmentid:
@@ -10420,8 +10524,10 @@ class CourseTmpItemHelperViewset(viewsets.ModelViewSet):
             if not helper_obj:
                 result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Employee ID does not exist!!",'error': True} 
                 return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
-
             
+            item_code = str(cartobj.itemcodeid.item_code)+"0000"
+            usage_val = validate_tdfirst_usagestock(done,site,item_code)
+
             for t in arrtreatmentid:
                 trmt_obj = Tmptreatment.objects.filter(status="Open",pk=t).first()
                 if not trmt_obj:
@@ -11048,6 +11154,9 @@ class PackageServiceTmpItemHelperViewset(viewsets.ModelViewSet):
 
     def list(self, request):
         try:
+            fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True)
+            site = fmspw[0].loginsite
+
             done = 1
            
             pos_id = request.GET.get('pos_id',None)
@@ -11086,6 +11195,9 @@ class PackageServiceTmpItemHelperViewset(viewsets.ModelViewSet):
                     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Insufficient Amount in Treatment Done not allow, Please Topup !!",'error': True} 
                     return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
             
+            item_code = posobj.code
+            usage_val = validate_tdfirst_usagestock(done,site,item_code)
+
             if not stock_obj.workcommpoints:
                 # if stock_obj.workcommpoints == None or stock_obj.workcommpoints == 0.0:
                 workcommpoints = 0.0
@@ -11189,7 +11301,9 @@ class PackageServiceTmpItemHelperViewset(viewsets.ModelViewSet):
                 result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Stock ID does not exist!!",'error': True} 
                 return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
             
-               
+            item_code = posobj.code
+            usage_val = validate_tdfirst_usagestock(done,site,item_code)
+
             if not request.GET.get('workcommpoints',None): 
                 # if request.GET.get('workcommpoints',None) is None or float(request.GET.get('workcommpoints',None)) == 0.0:
                 workcommpoints = 0.0
@@ -12030,7 +12144,9 @@ class AddRemoveSalesStaffViewset(viewsets.ModelViewSet):
 
                     staff = str(staff_id).split(',') 
                     # print(staff,"staff")
-                    for e in staff:  
+                    # for e in staff:  
+                    for idxe, e in enumerate(staff, start=1):
+    
                         emp_obj = Employee.objects.filter(emp_isactive=True,
                         pk=e).first()
                         # print(emp_obj,"emp_obj")
@@ -12043,66 +12159,92 @@ class AddRemoveSalesStaffViewset(viewsets.ModelViewSet):
                                 cartobj.sales_staff.add(emp_obj.pk)
                                 ratio = 0.0; salescommpoints = 0.0;salesamt = 0.0
                                 if cartobj.sales_staff.all().count() > 0:
-                                    count = cartobj.sales_staff.all().count()
+                                    # count = cartobj.sales_staff.all().count()
+                                    count = len(staff)
                                     ratio = float(cartobj.ratio) / float(count)
                                     salesamt = float(cartobj.trans_amt) / float(count)
                                     if stock_obj.salescommpoints and float(stock_obj.salescommpoints) > 0.0:
                                         salescommpoints = float(stock_obj.salescommpoints) / float(count)
 
-                            
+                                # "{:.2f}".format(float(salesamt))
+                                cal_ratio = (round(salesamt) / float(cartobj.trans_amt)) * 100
+                                # print(cal_ratio,"cal_ratio")
                                 tmpmulti = Tmpmultistaff(item_code=stock_obj.item_code,
-                                emp_code=emp_obj.emp_code,ratio=ratio,
-                                salesamt="{:.2f}".format(float(salesamt)),type=None,isdelete=False,role=1,
-                                dt_lineno=cartobj.lineno,itemcart=cartobj,emp_id=emp_obj,salescommpoints=salescommpoints)
+                                emp_code=emp_obj.emp_code,ratio="{:.4f}".format(float(cal_ratio)),
+                                salesamt=round(salesamt),type=None,isdelete=False,role=1,
+                                dt_lineno=cartobj.lineno,itemcart=cartobj,emp_id=emp_obj,salescommpoints= "{:.4f}".format(salescommpoints))
                                 tmpmulti.save()
 
+                                if idxe == len(staff):
+                                    all_id = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk).filter(~Q(pk=tmpmulti.pk)).order_by('-pk'
+                                    ).aggregate(amount=Coalesce(Sum('salesamt'), 0),ratio=Coalesce(Sum('ratio'), 0))
+                                   
+                                    if all_id['amount'] > 0.0:
+                                        sales_amt = "{:.2f}".format(all_id['amount'] )
+                                    else:
+                                        sales_amt = 0
+                                    # print(sales_amt,"sales_amt")
+                                    
+                                    if all_id['ratio'] > 0.0:
+                                        ratio_amt = "{:.4f}".format(all_id['ratio'] )
+                                    else:
+                                        ratio_amt = 0
+                                    # print(ratio_amt,"ratio_amt")
+
+
+                                    balanace_sal = float(cartobj.trans_amt) - float(sales_amt)
+                                    # print(balanace_sal,"balanace_sal")
+                                    balace_ratio = float(cartobj.ratio) - float(ratio_amt)
+                                    tmpmulti.salesamt = balanace_sal
+                                    tmpmulti.ratio = "{:.4f}".format(balace_ratio)
+                                    tmpmulti.save()
                                 
                                 cartobj.multistaff_ids.add(tmpmulti.pk)
                                 final = True
 
 
-                                if cartobj.multistaff_ids.all().count() == 1:
-                                    tm_ids =Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk)
-                                    for tm in tm_ids:
-                                        tm.ratio = "{:.2f}".format(float(ratio))
-                                        tm.salesamt = "{:.2f}".format(float(salesamt))
-                                        tm.salescommpoints = salescommpoints
-                                        tm.save()
+                                # if cartobj.multistaff_ids.all().count() == 1:
+                                #     tm_ids =Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk)
+                                #     for tm in tm_ids:
+                                #         tm.ratio = "{:.2f}".format(float(ratio))
+                                #         tm.salesamt = "{:.2f}".format(float(salesamt))
+                                #         tm.salescommpoints = salescommpoints
+                                #         tm.save()
                                    
-                                else:
+                                # else:
 
-                                    last_id = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk).order_by('pk').last()
-                                    if last_id:    
-                                        tmm_ids = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk).exclude(pk=last_id.pk)
-                                        for tmm in tmm_ids:
-                                            tmm.ratio = "{:.2f}".format(float(ratio))
-                                            tmm.salesamt = "{:.2f}".format(float(salesamt))
-                                            tmm.salescommpoints = salescommpoints
-                                            tmm.save()
+                                #     last_id = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk).order_by('pk').last()
+                                #     if last_id:    
+                                #         tmm_ids = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk).exclude(pk=last_id.pk)
+                                #         for tmm in tmm_ids:
+                                #             tmm.ratio = "{:.2f}".format(float(ratio))
+                                #             tmm.salesamt = "{:.2f}".format(float(salesamt))
+                                #             tmm.salescommpoints = salescommpoints
+                                #             tmm.save()
                                        
-                                        new_ratio = "{:.2f}".format(float(ratio))
-                                        new_salesamt = "{:.2f}".format(float(salesamt))
-                                        new_salspts = "{:.2f}".format(float(salescommpoints))
+                                #         new_ratio = "{:.2f}".format(float(ratio))
+                                #         new_salesamt = "{:.2f}".format(float(salesamt))
+                                #         new_salspts = "{:.2f}".format(float(salescommpoints))
 
-                                        tot_ratio = 0; tot_salesamt = 0 ; tot_salespts = 0
-                                        for i in range(1, cartobj.multistaff_ids.all().count()):
-                                            tot_ratio += float(new_ratio)
-                                            tot_salesamt += float(new_salesamt)
-                                            tot_salespts += float(new_salspts)
+                                #         tot_ratio = 0; tot_salesamt = 0 ; tot_salespts = 0
+                                #         for i in range(1, cartobj.multistaff_ids.all().count()):
+                                #             tot_ratio += float(new_ratio)
+                                #             tot_salesamt += float(new_salesamt)
+                                #             tot_salespts += float(new_salspts)
 
                                     
-                                        newratio = float(cartobj.ratio) - tot_ratio
-                                        newsalesamt = float(cartobj.trans_amt) - tot_salesamt
-                                        newsalspts = 0.0
-                                        if stock_obj.salescommpoints and float(stock_obj.salescommpoints) > 0.0:
-                                            newsalspts = float(stock_obj.salescommpoints) - tot_salespts
+                                #         newratio = float(cartobj.ratio) - tot_ratio
+                                #         newsalesamt = float(cartobj.trans_amt) - tot_salesamt
+                                #         newsalspts = 0.0
+                                #         if stock_obj.salescommpoints and float(stock_obj.salescommpoints) > 0.0:
+                                #             newsalspts = float(stock_obj.salescommpoints) - tot_salespts
                                         
-                                        ts_ids = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk,pk=last_id.pk)
-                                        for ts in ts_ids:
-                                            ts.ratio = "{:.2f}".format(float(newratio))
-                                            ts.salesamt = "{:.2f}".format(float(newsalesamt))
-                                            ts.salescommpoints = newsalspts
-                                            ts.save()
+                                #         ts_ids = Tmpmultistaff.objects.filter(itemcart__pk=cartobj.pk,pk=last_id.pk)
+                                #         for ts in ts_ids:
+                                #             ts.ratio = "{:.2f}".format(float(newratio))
+                                #             ts.salesamt = "{:.2f}".format(float(newsalesamt))
+                                #             ts.salescommpoints = newsalspts
+                                #             ts.save()
                                         
                             else:
                                 smsg = "Cart line no from top {0}, {1} Sales Staff Already created in Tmpmultistaff table!! ".format(str(idx),str(emp_obj.display_name))
@@ -27251,6 +27393,10 @@ class UserAuthorizationPopup(generics.CreateAPIView):
                     elif request.data['type'] == 'ApptBlock':
                         if fmspw_c and fmspw_c.flgallowblockappointment == False:
                             raise Exception('Logined User not allowed to do Block Appointment !!')
+                    elif request.data['type'] == 'ManualRewardRedeemPoint':
+                        if fmspw_c and fmspw_c.flgPoint == False:
+                            raise Exception('User not allowed to do Manual Point Reward / Redeem!!')
+                              
                                 
                         
 
@@ -28316,12 +28462,13 @@ class StudioPdfGeneration(APIView):
             display.start()
             html = template.render(data)
             options = {
-                'margin-top': '.25in',
-                'margin-right': '.25in',
-                'margin-bottom': '.25in',
-                'margin-left': '.25in',
+                'margin-top': '.20in',
+                'margin-right': '.20in',
+                'margin-bottom': '.20in',
+                'margin-left': '.20in',
                 'encoding': "UTF-8",
                 'no-outline': None,
+                'enable-local-file-access': ""
             }
             
             # existing = os.listdir(settings.PDF_ROOT)

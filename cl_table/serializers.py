@@ -401,21 +401,21 @@ class CustomerdetailSerializer(serializers.ModelSerializer):
         cust_address = ""
         for f in form_control_qs:
             if f.field_name == 'cust_address':
-                cust_address += str(obj.cust_address)
+                cust_address += str(obj.cust_address) if obj.cust_address else ""
             if f.field_name == 'cust_address1':
-                cust_address += " "+str(obj.cust_address1)
+                cust_address += " "+str(obj.cust_address1) if obj.cust_address1 else ""
             if f.field_name == 'cust_address2':
-                cust_address += " "+str(obj.cust_address2)
+                cust_address += " "+str(obj.cust_address2) if obj.cust_address2 else ""
             if f.field_name == 'cust_address3':
-                cust_address += " "+str(obj.cust_address3)  
+                cust_address += " "+str(obj.cust_address3) if obj.cust_address3 else "" 
             if f.field_name == 'sgn_block':
-                cust_address += " "+str(obj.sgn_block) 
+                cust_address += " "+str(obj.sgn_block) if obj.sgn_block else ""  
             if f.field_name == 'sgn_unitno':
-                cust_address += " "+str(obj.sgn_unitno) 
+                cust_address += " "+str(obj.sgn_unitno) if obj.sgn_unitno else ""  
             if f.field_name == 'sgn_street':
-                cust_address += " "+str(obj.sgn_street) 
+                cust_address += " "+str(obj.sgn_street) if obj.sgn_street else "" 
             if f.field_name == 'cust_postcode':
-                cust_address += " "+str(obj.cust_postcode) 
+                cust_address += " "+str(obj.cust_postcode) if obj.cust_postcode else ""  
         
         system_obj = Systemsetup.objects.filter(title='Other Outlet Customer Listings',
         value_name='Other Outlet Customer Listings',isactive=True).first()
@@ -1928,11 +1928,22 @@ class CustApptSerializer(serializers.ModelSerializer):
         model = Customer
         fields = ['id','cust_name','cust_email','cust_code','cust_nric','cust_remark','site_code']
 
+    def is_birthday_within_current_month(self, instance):
+        today = date.today()
+        if instance.cust_dob and today.month == instance.cust_dob.month:
+            return True
+        return False    
+
 
     def to_representation(self, instance):
         request = self.context['request']
         fmspw = Fmspw.objects.filter(user=request.user, pw_isactive=True).order_by('-pk')
         site = fmspw[0].loginsite
+        is_birthday = self.is_birthday_within_current_month(instance)
+        if is_birthday:
+            cust_dob = instance.cust_dob.strftime("%Y-%m-%d") if instance.cust_dob else None 
+        else:
+            cust_dob = None
 
         iscurrent = False
         if instance.site_code == site.itemsite_code:
@@ -1993,7 +2004,9 @@ class CustApptSerializer(serializers.ModelSerializer):
         'contactperson': contactperson,
         'outstanding_amt': "{:.2f}".format(float(instance.outstanding_amt)) if instance.outstanding_amt else "0.00",
         'cust_joindate':cust_joindate,'or_key':or_key,'isoutlet_resrict':isoutlet_restrict,
-        'cust_point_value' : "{:.2f}".format(instance.cust_point_value) if instance.cust_point_value else "0.00"
+        'cust_point_value' : "{:.2f}".format(instance.cust_point_value) if instance.cust_point_value else "0.00",
+        'IsBirthdayMonth' : is_birthday,
+        'cust_dob': cust_dob
         }
         return mapped_object    
 
@@ -2584,6 +2597,8 @@ class StaffPlusSerializer(serializers.ModelSerializer):
     flgappt =  serializers.SerializerMethodField()
     site_list = serializers.SerializerMethodField()
     shift_status = serializers.SerializerMethodField()
+    flgallowblockappointment =  serializers.SerializerMethodField()
+
 
     def get_shift_status(self, obj):
         shift_status = False
@@ -2631,6 +2646,13 @@ class StaffPlusSerializer(serializers.ModelSerializer):
         except:
             return False
 
+    def get_flgallowblockappointment(self,obj):
+        try:
+            fmspw = Fmspw.objects.filter(Emp_Codeid=obj).first()
+            return fmspw.flgallowblockappointment
+        except:
+            return False        
+
     def get_site_list(self,obj):
         return EmpSitelist.objects.filter(Emp_Codeid=obj,isactive=True).values('Site_Codeid','site_code')
 
@@ -2642,7 +2664,7 @@ class StaffPlusSerializer(serializers.ModelSerializer):
                   'EMP_TYPEid','jobtitle_name', 'is_login','pw_password','LEVEL_ItmIDid','level_desc','emp_isactive','flghourly',
                   "emp_nric","max_disc", 'emp_race', 'Emp_nationalityid', 'Emp_maritalid', 'Emp_religionid', 'emp_emer','emp_epf_employee',
                   'emp_emerno', 'emp_country', 'emp_remarks','show_in_trmt','show_in_appt','show_in_sales','emp_epf_employer','shift_status',
-                  'isdelete']
+                  'isdelete','flgallowblockappointment']
         read_only_fields = ('updated_at','created_at','emp_code','branch')
         extra_kwargs = {
             'emp_email': {'required': False},
@@ -3831,7 +3853,39 @@ class invoicetemplateConfigSerializer(serializers.ModelSerializer):
    
 #     class Meta:
 #         model = CustomerPointDtl
-#         fields = ['id','itm_desc']         
+#         fields = ['id','itm_desc']      
+
+class CustomerPointsListSerializer(serializers.ModelSerializer):
+    date = serializers.DateTimeField(format="%d-%m-%Y",required=False)
+    time = serializers.DateTimeField(format='%I:%M %p',required=False)
+
+
+    class Meta:
+        model = CustomerPoint
+        fields = ['id','date','time','type','total_point','bal_point'] 
+
+    def to_representation(self, instance):
+        data = super(CustomerPointsListSerializer, self).to_representation(instance)
+        cust_obj = Customer.objects.filter(cust_code=instance.cust_code,cust_isactive=True).first()
+
+        # ptdtl_ids = CustomerPointDtl.objects.filter(transacno=instance.transacno,cust_code=instance.cust_code).order_by('pk').first()
+        # serializer = ManualRewardPointDtlSerializer(ptdtl_ids, many=True)     
+
+        # data['custpointdtl'] = serializer.data
+        data['customer_id'] = cust_obj.pk if cust_obj else ""
+        data['total_point'] = "{:.2f}".format(instance.total_point) if instance.total_point else "0.00" 
+        data['now_point'] = "{:.2f}".format(instance.now_point) if instance.now_point else "0.00" 
+        data['bal_point'] = "{:.2f}".format(instance.bal_point) if instance.bal_point else "0.00"
+        # data['itm_desc'] = ptdtl_ids.itm_desc if ptdtl_ids and ptdtl_ids.itm_desc else ""
+        # data['qty'] = ptdtl_ids.qty if ptdtl_ids and ptdtl_ids.qty else ""
+        haud_ids = PosHaud.objects.filter(sa_transacno=instance.postransactionno).first()
+
+        data['transaction'] = haud_ids.sa_transacno_ref if haud_ids else instance.postransactionno
+        data['sa_transacno'] = instance.postransactionno if instance.type not in ['Manual Redeem','Manual Reward'] else ""
+                        
+        return data      
+
+
 
 class ManualRewardPointSerializer(serializers.ModelSerializer):
     date = serializers.DateTimeField(format="%d-%m-%Y",required=False)
@@ -3861,3 +3915,24 @@ class ManualRewardPointSerializer(serializers.ModelSerializer):
         data['qty'] = ptdtl_ids.qty if ptdtl_ids and ptdtl_ids.qty else ""
                         
         return data      
+
+class InvTemplateHeaderSortSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='pk',required=False)
+    invtemp_ids = serializers.SerializerMethodField()
+
+    def get_invtemp_ids(self, obj):
+        return None 
+
+    class Meta:
+        model = invoicetemplate
+        fields = ['id','invtemp_ids'] 
+        extra_kwargs = {'invtemp_ids': {'required': True}}
+    
+    def to_representation(self, instance):
+        data = super(InvTemplateHeaderSortSerializer, self).to_representation(instance)
+       
+        data['name'] = instance.name if instance.name else ""
+        # data['order_seq'] = instance.name if instance.order_seq else ""
+        data['order_seq'] = instance.order_seq 
+                 
+        return data   

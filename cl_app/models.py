@@ -68,10 +68,10 @@ class ItemSitelist(models.Model):
     created_at = models.DateTimeField(auto_now_add=True,null=True)
     skills_list = models.CharField(max_length=1000, null=True)
     updated_at  = models.DateTimeField(auto_now=True,null=True)
-    service_sel = models.BooleanField(db_column='Service_Selection', default=False) 
-    service_text = models.BooleanField(db_column='Service_Text', default=False) 
-    is_nric = models.BooleanField(db_column='Nric', default=False) 
-    is_automember = models.BooleanField(db_column='IsAutoMember', default=False) 
+    service_sel = models.BooleanField(db_column='Service_Selection', default=False, null=True) 
+    service_text = models.BooleanField(db_column='Service_Text', default=False, null=True) 
+    is_nric = models.BooleanField(db_column='Nric', default=False, null=True) 
+    is_automember = models.BooleanField(db_column='IsAutoMember', default=False, null=True) 
     startday_hour = models.CharField(db_column='StartDay_Hour', max_length=100, blank=True, null=True)
     endday_hour = models.CharField(db_column='EndDay_Hour', max_length=100, blank=True, null=True)
     cell_duration = models.CharField(db_column='Cell_Duration', max_length=100, blank=True, null=True)
@@ -79,7 +79,7 @@ class ItemSitelist(models.Model):
     inv_templatename = models.CharField(db_column='Invoice_TemplateName', max_length=500, blank=True, null=True)  # Field name made lowercase.
     url = models.CharField(max_length=1000, null=True)
     is_dragappt = models.BooleanField(db_column='is_dragappt',default=True)  # Field name made lowercase.
-    is_empvalidate = models.BooleanField(db_column='is_empvalidate',default=True)  # Field name made lowercase.
+    is_empvalidate = models.BooleanField(db_column='is_empvalidate',default=True, null=True)  # Field name made lowercase.
     is_exclusive = models.BooleanField(null=True)
     walkin_custid = models.IntegerField(db_column='Walkin_Custid', blank=True, null=True)  # Field name made lowercase.
     showallsitebooking = models.BooleanField(db_column='showallsitebooking',default=False)  # Field name made lowercase.
@@ -234,7 +234,7 @@ class Usagelevel(models.Model):
     isactive = models.BooleanField(db_column='IsActive',default=True)  # Field name made lowercase.
     updated_at = models.DateTimeField(auto_now=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True)
-    optional = models.BooleanField(db_column='Optional')  # Field name made lowercase.
+    optional = models.BooleanField(db_column='Optional', null=True)  # Field name made lowercase.
 
 
     class Meta:
@@ -329,7 +329,8 @@ class TmpItemHelperSession(models.Model):
     sa_date = models.DateTimeField(blank=True, null=True)  # Field name made lowercase.
     site_code = models.CharField(db_column='Site_Code', max_length=10, blank=True, null=True)  # Field name made lowercase.
     helper_id = models.ForeignKey('cl_table.Employee', on_delete=models.PROTECT,null=True)  # Field name made lowercase.
-
+    percent = models.FloatField(db_column='Percent', blank=True, null=True)
+    work_amt = models.FloatField(db_column='Work_Amount', blank=True, null=True)
 
     class Meta:
         db_table = 'Tmp_Item_helperSession'

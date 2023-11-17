@@ -27,7 +27,8 @@ from .models import (Gender, Employee, Fmspw, Attendance2, Customer, Images, Tre
                      ItemFlexiservice,termsandcondition,Dayendconfirmlog,Participants,ProjectDocument,
                      MGMPolicyCloud,CustomerReferral,sitelistip,CustomerExtended,DisplayCatalog,
                      DisplayItem,OutletRequestLog,ItemBrand,PrepaidOpenCondition,PrepaidValidperiod,invoicetemplate,
-                     StaffDocument,OutletDocument,ItemBatchSno,TempprepaidAccountCondition,TempcartprepaidAccCond)
+                     StaffDocument,OutletDocument,ItemBatchSno,TempprepaidAccountCondition,TempcartprepaidAccCond,
+                     TaxType2TaxCode,Treatmentids,ItemLink)
 from cl_app.models import ItemSitelist, SiteGroup, LoggedInUser,TmpTreatmentSession
 from custom.models import Room,ItemCart,VoucherRecord,EmpLevel,PosPackagedeposit,payModeChangeLog,ProjectModel
 from .serializers import (EmployeeSerializer, FMSPWSerializer, UserLoginSerializer, Attendance2Serializer,
@@ -71,7 +72,8 @@ from .serializers import (EmployeeSerializer, FMSPWSerializer, UserLoginSerializ
                           DisplayItemlistSerializer,OutletRequestLogSerializer,
                           PrepaidValidperiodSerializer,ItemCartCustomerReceiptSerializer,
                           ItemCartdaudSerializer,ScheduleMonthSerializer,invoicetemplateConfigSerializer,ManualRewardPointSerializer,
-                          StaffDocumentSerializer,OutletDocumentSerializer,EcomAppointmentSerializer)
+                          StaffDocumentSerializer,OutletDocumentSerializer,EcomAppointmentSerializer,InvTemplateHeaderSortSerializer,
+                          CustomerPointsListSerializer)
 from datetime import date, timedelta, datetime
 import datetime
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
@@ -138,9 +140,10 @@ from django.db.models import Case, When, Value, IntegerField,CharField, DateFiel
 from tablib import Dataset, Databook
 import xlrd
 import calendar 
-from cl_app.serializers import StockSerializer
+from cl_app.serializers import StockSerializer,EcomLocationSelectSerializer
 from django.utils.dateparse import parse_datetime
 from xhtml2pdf import pisa
+from rest_framework.parsers import FileUploadParser
 
 type_ex = ['VT-Deposit','VT-Top Up','VT-Sales']
 
@@ -242,12 +245,14 @@ class UserLoginAPIView(GenericAPIView):
             # itemsites = ItemSitelist.objects.filter(itemsite_isactive=True,itemsite_code__inpk=site.pk).order_by('-pk')
             if itemsites:
                 for d in itemsites:
-                   val = {'id': d.itemsite_id, 'itemsite_code': d.itemsite_code, 'itemsite_desc': d.itemsite_desc}
-                   sites.append(val)
-                   if branch == "":
-                       branch = d.itemsite_code
-                   if salon == "":
-                       salon = d.Site_Groupid.description if d.Site_Groupid else "" 
+                    ec_serializer = EcomLocationSelectSerializer(d, context={'request': self.request})
+                    # print(ec_serializer.data,"ec_serializer")
+                    # val = {'id': d.itemsite_id, 'itemsite_code': d.itemsite_code, 'itemsite_desc': d.itemsite_desc}
+                    sites.append(ec_serializer.data)
+                    if branch == "":
+                        branch = d.itemsite_code
+                    if salon == "":
+                        salon = d.Site_Groupid.description if d.Site_Groupid else "" 
 
             # salon = siteid.Site_Groupid.description
             webbe = fmspw.flgallcom
@@ -3061,6 +3066,11 @@ class AppointmentViewset(viewsets.ModelViewSet):
                     link_flag = True
 
                 Appt = request.data.get('Appointment')
+                if 'ItemSite_Codeid' in Appt and Appt['ItemSite_Codeid']:
+                    site_obj = ItemSitelist.objects.filter(pk=Appt['ItemSite_Codeid'],itemsite_isactive=True).first()
+                    if site_obj:
+                        site = site_obj
+
                 if not Appt['appt_date']:
                     result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Please select Appointment Date!!",'error': True} 
                     return Response(result, status=status.HTTP_400_BAD_REQUEST)
@@ -3138,6 +3148,11 @@ class AppointmentViewset(viewsets.ModelViewSet):
 
             
                 apptsite = fmspw[0].loginsite
+                if 'ItemSite_Codeid' in Appt and Appt['ItemSite_Codeid']:
+                    site_obj = ItemSitelist.objects.filter(pk=Appt['ItemSite_Codeid'],itemsite_isactive=True).first()
+                    if site_obj:
+                        apptsite = site_obj
+
                 
                 apptpw_setup = Systemsetup.objects.filter(title='appointmentPassword',
                 value_name='appointmentPassword',isactive=True).first()
@@ -3929,6 +3944,14 @@ class AppointmentViewset(viewsets.ModelViewSet):
 
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True)[0]
             outlet = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.GET.get('Outlet',None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    outlet = site_obj
+                    
             emp = fmspw.Emp_Codeid
             sc_system_obj = Systemsetup.objects.filter(title='Workschedule',
             value_name='Workschedule',isactive=True).first()
@@ -4137,6 +4160,14 @@ class AppointmentResourcesViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True).first()
             site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.GET.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
+                    
             appointment = self.get_object(pk)
             appt = Appointment.objects.filter(pk=appointment.pk,appt_isactive=True,itemsite_code=site.itemsite_code).first()
             if not appt:
@@ -4248,6 +4279,14 @@ class AppointmentResourcesViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True).first()
             site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.data.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj 
+
             appobj = self.get_object(pk)
             old_empcode = appobj.emp_no
             apptstatus = appobj.appt_status
@@ -4871,6 +4910,13 @@ class AppointmentEditViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True).first()
             site = fmspw.loginsite
+            #siteCode option filter
+            site_select = request.GET.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
+
             app = self.get_object(pk)
             appt = Appointment.objects.filter(pk=app.pk,appt_isactive=True,itemsite_code=site.itemsite_code).first()
             if not appt:
@@ -5968,7 +6014,14 @@ class AppointmentSortAPIView(generics.ListCreateAPIView):
         fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True)
         queryset = Employee.objects.none()
         emp = fmspw[0].Emp_Codeid
-        site = fmspw[0].loginsite   
+        site = fmspw[0].loginsite 
+
+        #siteCode option filter
+        site_select = self.request.GET.get('site_select', None)
+        if site_select:
+            site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+            if site_obj:
+                site = site_obj  
     
         if self.request.GET.get('date',None) and not self.request.GET.get('date',None) is None:
             date = self.request.GET.get('date',None)
@@ -6039,7 +6092,14 @@ class AppointmentSortAPIView(generics.ListCreateAPIView):
     def create(self, request):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True).first()
-            site = fmspw.loginsite   
+            site = fmspw.loginsite  
+
+            #siteCode option filter
+            site_select = self.request.data.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj  
     
             if not request.data['emp_ids'] or request.data['emp_ids'] == [] or request.data['emp_ids'] is None:
                 result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Please Select Employee!!",'error': True} 
@@ -6111,6 +6171,15 @@ class StockListViewset(viewsets.ModelViewSet):
 
     def list(self, request):
         try:
+            try:
+                limit = int(request.GET.get("limit",12))
+            except:
+                limit = 12
+            try:
+                page = int(request.GET.get("page",1))
+            except:
+                page = 1
+
             ss_system_obj = Systemsetup.objects.filter(title='staffskill',
             value_name='staffskill',isactive=True).first()
 
@@ -6183,9 +6252,18 @@ class StockListViewset(viewsets.ModelViewSet):
             systemsetup_dur = Systemsetup.objects.filter(title='AppointmentServiceDurationAdd'
             ,value_name='AppointmentServiceDurationAdd',isactive=True).first()
             # print(queryset,"queryset")
+
+            total_page = 1;total = len(queryset)
+            
+            isstock_obj = False
+            system_setup = Systemsetup.objects.filter(title='Stock Setting',value_name='Free Text',isactive=True).first()
+            if system_setup and system_setup.value_data:
+                # isstock_obj = Stock.objects.filter(pk=system_setup.value_data,item_isactive=True).order_by('item_seq').first()
+                isstock_obj = Stock.objects.filter(pk=system_setup.value_data).order_by('item_seq').first()
+
             if queryset:
                 serializer_class = StockListSerializer
-                total = len(queryset)
+                # total = len(queryset)
                 state = status.HTTP_200_OK
                 message = "Listed Succesfully"
                 error = False
@@ -6241,16 +6319,17 @@ class StockListViewset(viewsets.ModelViewSet):
                 # sleep(2) 
                 # print(len(lst),"lst length") 
                 v['dataList'] =  lst  
-                v['stock_id'] = ""
-                system_setup = Systemsetup.objects.filter(title='Stock Setting',value_name='Free Text',isactive=True).first()
-                if system_setup and system_setup.value_data:
-                    # isstock_obj = Stock.objects.filter(pk=system_setup.value_data,item_isactive=True).order_by('item_seq').first()
-                    isstock_obj = Stock.objects.filter(pk=system_setup.value_data).order_by('item_seq').first()
-                    v['stock_id'] = isstock_obj.pk if isstock_obj else ""
+                # v['stock_id'] = ""
+                v['stock_id'] = isstock_obj.pk if isstock_obj else ""
                 return Response(result, status=status.HTTP_200_OK)   
             else:
                 serializer = self.get_serializer()
-                result = {'status': status.HTTP_204_NO_CONTENT,"message":"No Content",'error': False, 'data': []}
+                result = {'status': status.HTTP_200_OK,"message":"Listed Succesfully",'error': False, 
+                'data': {'meta': {'pagination': {"per_page":limit,"current_page":page,"total":total,
+                "total_pages":total_page}}, 'dataList': []},"stock_id": isstock_obj.pk if isstock_obj else ""}
+
+                # result = {'status': status.HTTP_204_NO_CONTENT,"message":"No Content",'error': False, 'data': [],
+                # "stock_id": isstock_obj.pk if isstock_obj else ""}
             return Response(data=result, status=status.HTTP_200_OK)
         except Exception as e:
             invalid_message = str(e)
@@ -6259,7 +6338,7 @@ class StockListViewset(viewsets.ModelViewSet):
 class TreatmentApptAPI(generics.ListAPIView):
     authentication_classes = [ExpiringTokenAuthentication]
     permission_classes = [IsAuthenticated & authenticated_only]
-    queryset = Treatment.objects.filter().order_by('-pk')
+    # queryset = Treatment.objects.filter().order_by('-pk')
     serializer_class = TreatmentApptSerializer
 
     def list(self, request):
@@ -7884,6 +7963,7 @@ class UsersList(APIView):
             'flginvoicedate' : fmspw.flginvoicedate if fmspw.flginvoicedate == True else False ,
             'flgstaff':fmspw.flgstaff if fmspw.flgstaff == True else False ,
             'flgpayment':fmspw.flgpayment if fmspw.flgpayment == True else False ,
+            'flgallowblockappointment': fmspw.flgallowblockappointment if fmspw.flgallowblockappointment == True else False ,
             # 'flginventory' : fmspw.flginventory if fmspw.flginventory == True else False ,
             # 'flgdayend' : fmspw.flgdayend if fmspw.flgdayend == True else False ,
             # 'flgbackend' : fmspw.flgbackend if fmspw.flgbackend == True else False ,
@@ -8563,6 +8643,11 @@ class postaudViewset(viewsets.ModelViewSet):
                                 # print(taud.pay_premise,taud.credit_debit)
                                 if taud:
                                     taud_ids.append(taud.pk)
+
+                                payremarks = req.get('pay_rem4', None)
+                                if payremarks:
+                                    taud.pay_rem4 = payremarks
+                                    taud.save()    
                         
                         # taudid=taud,
                         payModeChangeLog(sa_transacno=sa_transacno,paytype=req['old_paytype'] if 'old_paytype' in req else None,
@@ -9097,16 +9182,22 @@ class postaudViewset(viewsets.ModelViewSet):
                             if req['prepaid'] == True:
                                 # print(req['prepaid'],"ok")
                                 # amount = float(req['pay_amt'])
-                                splt = str(req['pay_rem1']).split("-")
-                                pp_no = splt[0]
-                                line_no = splt[1]
-                                # print(pp_no,line_no,"line_no")
-
                                 if 'pay_rem2' in req and req['pay_rem2']:
                                     mpre_obj = PrepaidAccount.objects.filter(pk=req['pay_rem2']).first()
                                 else:
                                     mpre_obj = False
 
+                                if not mpre_obj:
+                                    raise Exception("PrepaidAccount ID Does'nt exist!!")
+
+
+                                splt = str(req['pay_rem1']).split("-")
+                                # pp_no = splt[0]
+                                pp_no = mpre_obj.pp_no
+                                # print(pp_no,"pp_no")
+                                # line_no = int(splt[1])
+                                line_no = mpre_obj.line_no
+                               
                                 if mpre_obj and mpre_obj.package_code:
                                     open_ids = PrepaidAccountCondition.objects.filter(pp_no=pp_no,
                                     pos_daud_lineno=line_no,p_itemtype="Inclusive",package_code_lineno=mpre_obj.package_code_lineno).only('pp_no','pos_daud_lineno').first()
@@ -9549,7 +9640,8 @@ class postaudViewset(viewsets.ModelViewSet):
 
                                 check.remove("CREDIT")
                             # elif req['pay_typeid'] == 9:
-                            elif str(paytable.pay_code).upper() == 'VCPM':    
+                            # elif str(paytable.pay_code).upper() in ['VCPM','VC']: 
+                            elif 'VC' in str(paytable.pay_code).upper():       
                                 card_no = req['pay_rem1']
                                 # crdobj = CreditNote.objects.filter(credit_code=req['pay_rem1'],cust_code=cust_obj.cust_code,site_code=site.itemsite_code).first()
                                 # crdobj = CreditNote.objects.filter(credit_code=req['pay_rem1'],cust_code=cust_obj.cust_code).first()
@@ -9781,6 +9873,10 @@ class postaudViewset(viewsets.ModelViewSet):
                                 # print(taud.pay_premise,taud.credit_debit)
                                 if taud:
                                     taud_ids.append(taud.pk)
+                                payremarks = req.get('pay_rem4', None)
+                                if payremarks:
+                                    taud.pay_rem4 = payremarks
+                                    taud.save()    
                 
                 # print(n)
                 # print(taud_ids,"taud_ids")
@@ -10328,7 +10424,7 @@ class postaudViewset(viewsets.ModelViewSet):
         except Exception as e:
            invalid_message = str(e)
            return general_error_response(invalid_message)
-     
+        
         # state = status.HTTP_400_BAD_REQUEST
         # message = "Invalid Input"
         # error = True
@@ -11629,6 +11725,13 @@ class CustomerReceiptPrintList(generics.ListAPIView):
             # print(hdr_data[0],"hdr_data[0]")
             for h in hdr_data:
                 h['trans'] = hdr[0].sa_transacno_ref
+                h['void_refno'] = ""
+                if hdr[0].isvoid == True:
+                    sa_ids = PosHaud.objects.filter(sa_transacno=hdr[0].void_refno).order_by('pk').first()
+                    if sa_ids:
+                        h['void_refno'] = sa_ids.sa_transacno_ref
+                   
+
                 h['issued'] = hdr[0].cas_name
                 dsplit = str(h['sa_date']).split("T")
                 date = datetime.datetime.strptime(str(dsplit[0]), '%Y-%m-%d').strftime("%d-%b-%Y")
@@ -11749,8 +11852,10 @@ class CustomerReceiptPrintList(generics.ListAPIView):
                     d['dt_itemdesc'] = d['record_detail_type'] +"-"+ d['dt_itemdesc']
                 elif d['dt_status'] == 'SA' and d['record_detail_type'] in ['TP SERVICE','TP PRODUCT','TP PREPAID']:
                     d['dt_itemdesc'] = d['record_detail_type'] +"-"+ d['dt_itemdesc']
+                elif d['dt_status'] == 'VT' and d['record_detail_type'] == "PACKAGE":
+                    d['dt_itemdesc'] = d['dt_itemdesc']+"-"+str(packages) 
                 elif d['dt_status'] == 'VT':
-                    d['dt_itemdesc'] = d['dt_itemdesc']    
+                    d['dt_itemdesc'] = d['dt_itemdesc']  
                 elif d['dt_status'] == 'VT' and d['record_detail_type'] == "TD":
                     d['dt_itemdesc'] = d['dt_itemdesc']
                 elif d['dt_status'] == 'VT' and d['record_detail_type'] in ['TP SERVICE','TP PRODUCT','TP PREPAID']:
@@ -12900,7 +13005,14 @@ class EmployeeAppointmentViewNew(viewsets.ModelViewSet):
                 raise Exception('Login Employee Does not exist')
 
             emp = fmspw.Emp_Codeid
-            site = fmspw.loginsite  
+            site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.GET.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
             
             # current_time = datetime.datetime.now().strftime('%H:%M:%S')
             view_type = request.GET.get('type',None)
@@ -13020,8 +13132,8 @@ class EmployeeAppointmentViewNew(viewsets.ModelViewSet):
                     app_queryset = False
                     if send_data != []:
                         if check == "day":
-                            app_queryset = Appointment.objects.filter(emp_noid__pk__in=send_data,appt_date=date,appt_isactive=True,
-                            itemsite_code=site.itemsite_code).order_by('linkcode','appt_fr_time')
+                            # itemsite_code=site.itemsite_code
+                            app_queryset = Appointment.objects.filter(emp_noid__pk__in=send_data,appt_date=date,appt_isactive=True).order_by('linkcode','appt_fr_time')
                         elif check == "week":
                             startweek = date - timedelta(date.weekday())
                             endweek = startweek + timedelta(7)
@@ -13265,6 +13377,9 @@ class EmployeeAppointmentViewNew(viewsets.ModelViewSet):
                             i['gender'] = gender
                             i['age'] = age
                             i['sec_status_flag'] = True if obj.sec_status == "Rescheduled" else False 
+                            i['itemsite_code'] = obj.itemsite_code
+                            i['itemsite_desc'] = obj.ItemSite_Codeid.itemsite_desc if obj.ItemSite_Codeid and obj.ItemSite_Codeid.itemsite_desc else ""
+
 
 
 
@@ -13974,6 +14089,19 @@ class CustApptAPI(generics.ListAPIView):
         try:
             serializer_class = CustApptSerializer
             queryset = self.filter_queryset(self.get_queryset())
+            # result = {}
+            # today = date.today()
+
+            # birthday_customers = [customer for customer in queryset if customer.cust_dob and customer.cust_dob.month == today.month]
+
+            # if birthday_customers:
+            #     birthday_serializer = self.get_serializer(birthday_customers, many=True, context={'request': self.request})
+            #     birthday_response = {'status': status.HTTP_200_OK, "message": "Customers with birthdays in the current month", 'error': False, 'data': birthday_serializer.data}
+            # else:
+            #     birthday_response = {'status': status.HTTP_204_NO_CONTENT, "message": "No customers with birthdays in the current month", 'error': False, 'data': []}
+            
+            # result.update(birthday_response)
+
             if queryset:
                 serializer = self.get_serializer(queryset, many=True, context={'request': self.request})
                 result = {'status': status.HTTP_200_OK,"message": "Listed Succesfully",'error': False, 'data':  serializer.data}
@@ -14769,6 +14897,13 @@ class AppointmentBlockViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True).first()
             site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.data.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
             
             reason_obj = BlockReason.objects.filter(active=True,pk=request.data['reason_id']).first()
             if not reason_obj:
@@ -14922,6 +15057,14 @@ class AppointmentBlockViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True).first()
             site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.GET.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
+                    
             appointment = self.get_object(pk)
             appt = Appointment.objects.filter(pk=appointment.pk,appt_isactive=True,itemsite_code=site.itemsite_code).first()
             if not appt:
@@ -14960,6 +15103,15 @@ class AppointmentBlockViewset(viewsets.ModelViewSet):
         try:
             fmspw = Fmspw.objects.filter(user=self.request.user, pw_isactive=True).first()
             site = fmspw.loginsite
+
+            #siteCode option filter
+            site_select = request.data.get('site_select', None)
+            if site_select:
+                site_obj = ItemSitelist.objects.filter(pk=site_select,itemsite_isactive=True).first()
+                if site_obj:
+                    site = site_obj
+
+            
             app = self.get_object(pk)
             emp_obj = Employee.objects.filter(emp_code=app.emp_no,emp_isactive=True).first()
             if not emp_obj:
@@ -15254,12 +15406,13 @@ class AppointmentListPdf(APIView):
                 display.start()
                 html = template.render(data)
                 options = {
-                    'margin-top': '.25in',
-                    'margin-right': '.25in',
-                    'margin-bottom': '.25in',
-                    'margin-left': '.25in',
+                    'margin-top': '.20in',
+                    'margin-right': '.20in',
+                    'margin-bottom': '.20in',
+                    'margin-left': '.20in',
                     'encoding': "UTF-8",
-                    'no-outline': None,       
+                    'no-outline': None,
+                    'enable-local-file-access': ""
                 }
                 
                 dst ="AppointmentReport" + ".pdf"
@@ -16097,12 +16250,13 @@ class DayEndListAPIView(generics.ListAPIView,generics.CreateAPIView):
                 display.start()
                 html = template.render(data)
                 options = {
-                    'margin-top': '.25in',
-                    'margin-right': '.25in',
-                    'margin-bottom': '.25in',
-                    'margin-left': '.25in',
+                    'margin-top': '.20in',
+                    'margin-right': '.20in',
+                    'margin-bottom': '.20in',
+                    'margin-left': '.20in',
                     'encoding': "UTF-8",
                     'no-outline': None,
+                    'enable-local-file-access': ""
                 }
                 
                 confirmdate = datetime.datetime.now().strftime('%d-%m-%YT%H:%M:%S')
@@ -16929,12 +17083,13 @@ class DayEndListAPIView(generics.ListAPIView,generics.CreateAPIView):
                         display.start()
                         html = template.render(data)
                         options = {
-                            'margin-top': '.25in',
-                            'margin-right': '.25in',
-                            'margin-bottom': '.25in',
-                            'margin-left': '.25in',
+                            'margin-top': '.20in',
+                            'margin-right': '.20in',
+                            'margin-bottom': '.20in',
+                            'margin-left': '.20in',
                             'encoding': "UTF-8",
                             'no-outline': None,
+                            'enable-local-file-access': ""
                         }
                         
                         dst ="DayEnd_"+str(site.itemsite_code)+"_"+date_str+"_"+fmspw_c.pw_userlogin+"_"+str(confirmdate)+".pdf"
@@ -17449,6 +17604,12 @@ class StaffPlusViewSet(viewsets.ModelViewSet):
                             user = User.objects.create_user(username=request.data['display_name'], email=s.emp_email,
                                                             password=request.data['pw_password'])
                             levelobj = Securities.objects.filter(pk=request.data['LEVEL_ItmIDid'], level_isactive=True).first()
+                            
+                            flgallowblockappointment = True
+                            if 'flgallowblockappointment' in request.data and request.data['flgallowblockappointment']:
+                                flgallowblockappointment = request.data['flgallowblockappointment']
+                            
+                                
                             f = Fmspw(pw_userlogin=request.data['display_name'],
                                 pw_password=request.data['pw_password'],
                                 LEVEL_ItmIDid=levelobj,
@@ -17464,7 +17625,7 @@ class StaffPlusViewSet(viewsets.ModelViewSet):
                                 flgrefund=True,flgemail=True,flgcustadd=True,flgfoc=True,
                                 flgrefundpp=True,flgrefundcn=True,flgstockusagememo=True,
                                 flgchangeunitprice=True,flgallowinsufficent=True,
-                                flgallowblockappointment=True,flgchangeexpirydate=True,
+                                flgallowblockappointment=flgallowblockappointment,flgchangeexpirydate=True,
                                 flgalldayendsettlement=True,flgtransacdisc=True,flgeditath=True
                                 )
                             f.save()
@@ -17601,6 +17762,7 @@ class StaffPlusViewSet(viewsets.ModelViewSet):
                         if fmspw_obj:
                             fmspw_obj.pw_userlogin = request.data['display_name']
                             fmspw_obj.pw_password = pw if pw else fmspw_obj.pw_password
+                            fmspw_obj.flgallowblockappointment = request.data['flgallowblockappointment'] if 'flgallowblockappointment' in request.data and request.data['flgallowblockappointment'] else False
                             fmspw_obj.save()
                             if fmspw_obj.user:
                                 fmspw_obj.user.username = request.data['display_name']
@@ -17641,6 +17803,13 @@ class StaffPlusViewSet(viewsets.ModelViewSet):
                                 user = User.objects.create_user(username=request.data['display_name'], email=employee.emp_email,
                                                                 password=request.data['pw_password'])
                             level_obj = Securities.objects.filter(pk=request.data['LEVEL_ItmIDid'], level_isactive=True).first()
+                            
+                            flgallowblockappointment = True
+                            if 'flgallowblockappointment' in request.data and request.data['flgallowblockappointment']:
+                                flgallowblockappointment = request.data['flgallowblockappointment']
+                            
+                               
+                            
                             test = Fmspw(pw_userlogin=request.data['display_name'],
                                     pw_password=request.data['pw_password'],
                                     LEVEL_ItmIDid=level_obj,
@@ -17656,7 +17825,7 @@ class StaffPlusViewSet(viewsets.ModelViewSet):
                                     flgrefund=True,flgemail=True,flgcustadd=True,flgfoc=True,
                                     flgrefundpp=True,flgrefundcn=True,flgstockusagememo=True,
                                     flgchangeunitprice=True,flgallowinsufficent=True,
-                                    flgallowblockappointment=True,flgchangeexpirydate=True,
+                                    flgallowblockappointment=flgallowblockappointment,flgchangeexpirydate=True,
                                     flgalldayendsettlement=True,flgtransacdisc=True,flgeditath=True
                                     ).save()
                             employee.pw_userlogin = request.data['display_name']
@@ -21913,6 +22082,10 @@ class customerinvoicetemplatefiledownload(APIView):
                         response['Content-Disposition'] = 'inline; filename=' + os.path.basename(file_path)
                         # print(response,"response")
                         return response
+
+                result = {'status': status.HTTP_204_NO_CONTENT,
+                "message":"No Content",'error': False, 'data': []}
+                return Response(data=result, status=status.HTTP_200_OK)        
 
             else:
                 raise Exception('POST Method only allowed!!')   
@@ -26562,14 +26735,14 @@ class EcomAppointBookingViewset(viewsets.ModelViewSet):
 
                 Appt = request.data.get('Appointment')
 
-                if not 'cust_name' in Appt or not Appt['cust_name']:
-                    raise Exception('Please give Name!!.') 
+                # if not 'cust_name' in Appt or not Appt['cust_name']:
+                #     raise Exception('Please give Name!!.') 
                 
-                if not 'cust_email' in Appt or not Appt['cust_email']:
-                    raise Exception('Please give Email!!.') 
+                # if not 'cust_email' in Appt or not Appt['cust_email']:
+                #     raise Exception('Please give Email!!.') 
 
-                if not 'cust_phone2' in Appt or not Appt['cust_phone2']:
-                    raise Exception('Please give Mobile Number!!.') 
+                # if not 'cust_phone2' in Appt or not Appt['cust_phone2']:
+                #     raise Exception('Please give Mobile Number!!.') 
                 
                 if not 'site_id' in Appt or not Appt['site_id']:
                     raise Exception('Please give Location!!.') 
@@ -26618,40 +26791,47 @@ class EcomAppointBookingViewset(viewsets.ModelViewSet):
                 else:
                     channel = False 
 
-                cust_queryset = Customer.objects.filter(cust_isactive=True).exclude(site_code__isnull=True).only('cust_isactive').order_by('-pk')
-                customer = cust_queryset.filter(Q(cust_name__icontains=Appt['cust_name']), 
-                Q(cust_email__icontains=Appt['cust_email']),Q(cust_phone2__icontains=Appt['cust_phone2'])).first()
+                    
+                # cust_queryset = Customer.objects.filter(cust_isactive=True).exclude(site_code__isnull=True).only('cust_isactive').order_by('-pk')
+                # customer = cust_queryset.filter(Q(cust_name__icontains=Appt['cust_name']), 
+                # Q(cust_email__icontains=Appt['cust_email']),Q(cust_phone2__icontains=Appt['cust_phone2'])).first()
 
                 # print(customer,"customer") 
                 # customer = Customer.objects.filter(pk=Appt['cust_noid'],cust_isactive=True,
                 # site_code=site.itemsite_code).first()
                 # customer = Customer.objects.filter(pk=Appt['cust_noid'],cust_isactive=True).first()
                 # print(customer,'customer')
-                if not customer:
-                    custcontrol_obj = ControlNo.objects.filter(control_description__iexact="VIP CODE",Site_Codeid__pk=site.pk).first()
-                    if not custcontrol_obj:
-                        result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Customer Control No does not exist!!",'error': True} 
-                        return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                # if not customer:
+                #     custcontrol_obj = ControlNo.objects.filter(control_description__iexact="VIP CODE",Site_Codeid__pk=site.pk).first()
+                #     if not custcontrol_obj:
+                #         result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Customer Control No does not exist!!",'error': True} 
+                #         return Response(result, status=status.HTTP_400_BAD_REQUEST) 
                         
-                    cus_code = str(custcontrol_obj.Site_Codeid.itemsite_code)+str(custcontrol_obj.control_no)
-                    # gender = False
-                    # if request.data['Cust_sexesid']:
-                    #     gender = Gender.objects.filter(pk=request.data['Cust_sexesid'],itm_isactive=True).first()
+                #     cus_code = str(custcontrol_obj.Site_Codeid.itemsite_code)+str(custcontrol_obj.control_no)
+                #     # gender = False
+                #     # if request.data['Cust_sexesid']:
+                #     #     gender = Gender.objects.filter(pk=request.data['Cust_sexesid'],itm_isactive=True).first()
                     
-                    classobj = CustomerClass.objects.filter(class_code='100001',class_isactive=True).first()
+                #     classobj = CustomerClass.objects.filter(class_code='100001',class_isactive=True).first()
                    
-                    cust_k = Customer(site_code=site.itemsite_code,Site_Codeid=site,cust_code=cus_code,
-                    cust_sexes=None, cust_joindate=timezone.now(),join_status=True,
-                    cust_class=classobj.class_code if classobj and classobj.class_code else None,
-                    Cust_Classid=classobj,custallowsendsms=True,or_key=site.itemsite_code,
-                    cust_name=Appt['cust_name'],cust_phone2=Appt['cust_phone2'],cust_email=Appt['cust_email'])
-                    cust_k.save()
-                    if cust_k.pk:
-                        custcontrol_obj.control_no = int(custcontrol_obj.control_no) + 1
-                        custcontrol_obj.save()
+                #     cust_k = Customer(site_code=site.itemsite_code,Site_Codeid=site,cust_code=cus_code,
+                #     cust_sexes=None, cust_joindate=timezone.now(),join_status=True,
+                #     cust_class=classobj.class_code if classobj and classobj.class_code else None,
+                #     Cust_Classid=classobj,custallowsendsms=True,or_key=site.itemsite_code,
+                #     cust_name=Appt['cust_name'],cust_phone2=Appt['cust_phone2'],cust_email=Appt['cust_email'])
+                #     cust_k.save()
+                #     if cust_k.pk:
+                #         custcontrol_obj.control_no = int(custcontrol_obj.control_no) + 1
+                #         custcontrol_obj.save()
 
-                    customer = cust_k     
-                    
+                #     customer = cust_k     
+
+                customer = Customer.objects.filter(pk=Appt['cust_noid'],cust_isactive=True).first()
+                # print(customer,'customer')
+                if not customer:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Customer ID does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+
                 cust_obj = customer
 
                 cust_email = cust_obj.cust_email
@@ -27324,8 +27504,102 @@ class InvoiceTemplateConfigViewset(viewsets.ModelViewSet):
         except Exception as e:
             invalid_message = str(e)
             return general_error_response(invalid_message)                
- 
+    
 
+    @action(detail=False, methods=['get'], name='getheaderorderchange')
+    def getheaderorderchange(self, request):
+        try:
+            queryset = invoicetemplate.objects.filter(type='bodyList',isactive=True,checked=True).filter(~Q(order_seq__isnull=True)).order_by('order_seq')
+            if queryset:
+                serializer = InvTemplateHeaderSortSerializer(queryset, many=True)
+                result = {'status': status.HTTP_200_OK,"message":"Listed Succesfully",'error': False, 'data':  serializer.data}
+            else:
+                serializer = InvTemplateHeaderSortSerializer()
+                result = {'status':status.HTTP_204_NO_CONTENT,"message":"No Content",'error': False,  'data': []}
+            return Response(data=result, status=status.HTTP_200_OK)  
+        except Exception as e:
+            invalid_message = str(e)
+            return general_error_response(invalid_message)                
+    
+
+    @transaction.atomic
+    @action(methods=['post'], detail=False, permission_classes=[IsAuthenticated & authenticated_only],
+    authentication_classes=[ExpiringTokenAuthentication])
+    def headerorderchange(self, request):
+        try:
+            with transaction.atomic():
+                if not 'invtemp_ids' in request.data or not request.data['invtemp_ids'] or request.data['invtemp_ids'] == [] or request.data['invtemp_ids'] is None:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Please Select Header List!!",'error': True} 
+                    return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
+                    
+                queryset = invoicetemplate.objects.filter(type='bodyList',isactive=True,checked=True)
+                update_ids = queryset.update(order_seq=None)
+                # print(request.data,"request.data")
+                serializer = InvTemplateHeaderSortSerializer(data=request.data)
+                if serializer.is_valid():
+                    invtemp_ids = request.data['invtemp_ids']
+                    # print(invtemp_ids,"invtemp_ids")
+                    if invtemp_ids != []:
+                        inv_obj_ids = invoicetemplate.objects.filter(isactive=True,checked=True,
+                        type='bodyList',pk__in=invtemp_ids)
+                        if not inv_obj_ids:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Header order change does not exist!!",'error': True} 
+                            return Response(data=result, status=status.HTTP_400_BAD_REQUEST)
+                    
+                        if inv_obj_ids:
+                            for idx, reqt in enumerate(invtemp_ids, start=1): 
+                                # print(idx,reqt,"reqt")
+                                inv_obj = invoicetemplate.objects.filter(pk=reqt).first()
+                                if inv_obj:
+                                    inv_obj.order_seq = idx  
+                                    inv_obj.save() 
+
+                            result = {'status': status.HTTP_201_CREATED,"message":"Updated Succesfully",
+                            'error': False}
+                            return Response(result, status=status.HTTP_201_CREATED)
+                    
+                result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Invalid Input",
+                'error': True, 'data': serializer.errors}
+                return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            invalid_message = str(e)
+            return general_error_response(invalid_message)                
+        
+
+
+
+class CustomerPointsListViewset(viewsets.ModelViewSet):
+    authentication_classes = [ExpiringTokenAuthentication]
+    permission_classes = [IsAuthenticated & authenticated_only]
+    serializer_class = CustomerPointsListSerializer
+
+    
+    def list(self, request):
+        try:
+            fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True)
+            site = fmspw[0].loginsite
+            if not self.request.GET.get('cust_id',None):
+                raise Exception('Please give Customer id!!.')
+
+            cust_obj = Customer.objects.filter(pk=self.request.GET.get('cust_id',None),cust_isactive=True).first()
+            if not cust_obj:
+                raise Exception('Customer ID does not exist') 
+
+            queryset = CustomerPoint.objects.filter(cust_code=cust_obj.cust_code).order_by('-pk')
+    
+            serializer_class = CustomerPointsListSerializer
+            
+            total = len(queryset) if queryset else 0
+            state = status.HTTP_200_OK
+            message = "Listed Succesfully"
+            error = False
+            data = None
+            result=response(self,request, queryset,total,  state, message, error, serializer_class, data, action=self.action)
+            return Response(result, status=status.HTTP_200_OK) 
+        except Exception as e:
+            invalid_message = str(e)
+            return general_error_response(invalid_message)
+        
 
 
 
@@ -27341,7 +27615,7 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
         if not cust_obj:
             raise Exception('Customer ID does not exist') 
 
-        queryset = CustomerPoint.objects.filter(type="Manual Reward",cust_code=cust_obj.cust_code).order_by('-pk')
+        queryset = CustomerPoint.objects.filter(type__in=["Manual Reward","Manual Redeem"],cust_code=cust_obj.cust_code).order_by('-pk')
        
         return queryset
 
@@ -27367,6 +27641,30 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
         except Exception as e:
             invalid_message = str(e)
             return general_error_response(invalid_message)
+    
+      
+
+
+    @action(detail=False, methods=['get'], name='Check')
+    def getmanualpointadjustment(self, request):
+        try:
+            fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True).first()
+            site = fmspw.loginsite
+            if not self.request.GET.get('cust_id',None):
+                raise Exception('Please give Customer id!!.')
+            cust_obj = Customer.objects.filter(pk=self.request.GET.get('cust_id',None),cust_isactive=True).first()
+            if not cust_obj:
+                raise Exception('Customer ID does not exist') 
+            
+            if cust_obj:
+                data = {'cust_point_value': "{:.2f}".format(cust_obj.cust_point_value)  if cust_obj.cust_point_value else "0.00"}
+                result = {'status': status.HTTP_200_OK,"message":"Listed Succesfully",'error': False, 'data':  data}
+            else:
+                result = {'status': status.HTTP_204_NO_CONTENT,"message":"No Content",'error': False, 'data': []}
+            return Response(data=result, status=status.HTTP_200_OK) 
+        except Exception as e:
+            invalid_message = str(e)
+            return general_error_response(invalid_message)
 
 
     @transaction.atomic
@@ -27380,13 +27678,17 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
                     raise Exception('Please give Customer id!!.') 
 
                 if not 'total_point' in request.data or not request.data['total_point']:
-                    raise Exception('Please give Point!!.') 
+                    raise Exception('Please give Total point!!.') 
 
                 if not 'remarks' in request.data or not request.data['remarks']:
                     raise Exception('Please give remark!!.') 
                 
                 if not 'ref_source' in request.data or not request.data['ref_source']:
                     raise Exception('Please give ref source!!.') 
+
+                if not 'adjust_type' in request.data or not request.data['adjust_type']:
+                    raise Exception('Please give adjustment type!!.') 
+            
         
     
                 cust_id = request.data['cust_id'] 
@@ -27398,16 +27700,6 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
 
                 serializer = ManualRewardPointSerializer(data=request.data)
                 if serializer.is_valid():
-                    rew_refcontrol_obj = ControlNo.objects.filter(control_description__iexact="Reward Sales",Site_Codeid__pk=fmspw.loginsite.pk).first()
-                    if not rew_refcontrol_obj:
-                        result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Reward Sales Control No does not exist!!",'error': True} 
-                        return Response(result, status=status.HTTP_400_BAD_REQUEST) 
-                    
-                    control_obj = ControlNo.objects.filter(control_description__iexact="Manual Reward Points",Site_Codeid__pk=fmspw.loginsite.pk).first()
-                    if not control_obj:
-                        result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Manual Reward Points Control No does not exist!!",'error': True} 
-                        return Response(result, status=status.HTTP_400_BAD_REQUEST) 
-                    
                     now_point = 0
                     if cust_obj and cust_obj.cust_point_value == None: 
                         now_point = 0
@@ -27415,47 +27707,121 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
                         if cust_obj and cust_obj.cust_point_value and cust_obj.cust_point_value > 0:
                             now_point = cust_obj.cust_point_value
 
-                    
-                    rew_transacno = str(rew_refcontrol_obj.control_prefix)+str(rew_refcontrol_obj.Site_Codeid.itemsite_code)+str(rew_refcontrol_obj.control_no)
-                    rew_refcontrol_obj.control_no = int(rew_refcontrol_obj.control_no) + 1
-                    rew_refcontrol_obj.save()
+                    custnow_point = now_point         
 
-                    
-                    sa_transacno = str(control_obj.control_prefix)+str(control_obj.Site_Codeid.itemsite_code)+str(control_obj.control_no)
-                    control_obj.control_no = int(control_obj.control_no) + 1
-                    control_obj.save()  
-                    
-                    # itm_code=None,itm_desc=None
+                    if request.data['adjust_type'] == "Reward":
+                        rew_refcontrol_obj = ControlNo.objects.filter(control_description__iexact="Reward Sales",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                        if not rew_refcontrol_obj:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Reward Sales Control No does not exist!!",'error': True} 
+                            return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                        
+                        control_obj = ControlNo.objects.filter(control_description__iexact="MANUAL REWARD POINTS",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                        if not control_obj:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Manual Reward Points Control No does not exist!!",'error': True} 
+                            return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                        
+                        
+                        
+                        rew_transacno = str(rew_refcontrol_obj.control_prefix)+str(rew_refcontrol_obj.Site_Codeid.itemsite_code)+str(rew_refcontrol_obj.control_no)
+                        rew_refcontrol_obj.control_no = int(rew_refcontrol_obj.control_no) + 1
+                        rew_refcontrol_obj.save()
 
-                    now_point  += float(request.data['total_point'])
+                        
+                        sa_transacno = str(control_obj.control_prefix)+str(control_obj.Site_Codeid.itemsite_code)+str(control_obj.control_no)
+                        control_obj.control_no = int(control_obj.control_no) + 1
+                        control_obj.save()  
+                        
+                        # itm_code=None,itm_desc=None
 
-                    ct = CustomerPointDtl(type="Manual Reward",cust_code=cust_obj.cust_code,
+                        now_point  += float(request.data['total_point'])
+
+                        ct = CustomerPointDtl(type="Manual Reward",cust_code=cust_obj.cust_code,
+                            cust_name=cust_obj.cust_name,parent_code=None,parent_desc=None,
+                            parent_display=None,itm_desc="Manual Reward Points",
+                            point="{:.2f}".format(float(request.data['total_point'])),now_point="{:.2f}".format(now_point),remark=request.data['remarks'],remark_code=None,
+                            remark_desc=None,isvoid=False,void_referenceno=None,isopen=True,qty=1,
+                            seq=False,sa_status="SA",bal_acc2=None,point_acc1=None,
+                            point_acc2=None,locid=False)
+                        ct.save()
+
+                        cust_obj.cust_point_value = "{:.2f}".format(now_point)
+                        cust_obj.save()
+
+                        custpt = CustomerPoint(transacno=rew_transacno,date=date.today(),username=fmspw.pw_userlogin,
+                        time=timezone.now(),cust_name=cust_obj.cust_name,cust_code=cust_obj.cust_code,type="Manual Reward",
+                        refno=sa_transacno,ref_source=request.data['ref_source'],isvoid=False,sa_status="SA",void_referenceno=None,
+                        total_point="{:.2f}".format(float(request.data['total_point'])),now_point="{:.2f}".format(now_point),seq=None,remarks=request.data['remarks'],
+                        bal_point="{:.2f}".format(now_point-float(request.data['total_point'])),expired=False,expired_date=None,mac_code=False,logno=False,
+                        approval_user=fmspw.pw_userlogin,cardno=False,bdate=None,pdate=None,expired_point=0,
+                        postransactionno=sa_transacno,postotalamt=0,locid=False,mgm_refno=None,tdate=None)
+                        custpt.save()
+                        rewd = self.get_object(custpt.pk)
+                        serializer_c = ManualRewardPointSerializer(rewd)
+                        
+                        if ct:
+                            ct.transacno = rew_transacno 
+                            ct.total_point = "{:.2f}".format(request.data['total_point'])
+                            ct.save()
+
+                    elif request.data['adjust_type'] == "Redeem":
+                        redem_refcontrol_obj = ControlNo.objects.filter(control_description__iexact="Redeem Sales",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                        if not redem_refcontrol_obj:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Redeem Sales Control No does not exist!!",'error': True} 
+                            return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+
+                        control_obj = ControlNo.objects.filter(control_description__iexact="MANUAL REDEEM POINTS",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                        if not control_obj:
+                            result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Manual Redeem Points Control No does not exist!!",'error': True} 
+                            return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                        
+                            
+                        
+                        redem_transacno = str(redem_refcontrol_obj.control_prefix)+str(redem_refcontrol_obj.Site_Codeid.itemsite_code)+str(redem_refcontrol_obj.control_no)
+                        redem_refcontrol_obj.control_no = int(redem_refcontrol_obj.control_no) + 1
+                        redem_refcontrol_obj.save()
+
+                        sa_transacno = str(control_obj.control_prefix)+str(control_obj.Site_Codeid.itemsite_code)+str(control_obj.control_no)
+                        control_obj.control_no = int(control_obj.control_no) + 1
+                        control_obj.save() 
+
+                        # itm_code=None,itm_desc=None
+                        now_point  -= float(request.data['total_point'])
+                        cal_point = float(request.data['total_point'])
+
+                        
+
+                        rct = CustomerPointDtl(type="Manual Redeem",cust_code=cust_obj.cust_code,
                         cust_name=cust_obj.cust_name,parent_code=None,parent_desc=None,
-                        parent_display=None,itm_desc="Manual Reward Points",
-                        point="{:.2f}".format(float(request.data['total_point'])),now_point="{:.2f}".format(now_point),remark=request.data['remarks'],remark_code=None,
+                        parent_display=None,itm_code=None,itm_desc="Manual Redeem Points",
+                        point=-cal_point,now_point=now_point,remark=request.data['remarks'],remark_code=None,
                         remark_desc=None,isvoid=False,void_referenceno=None,isopen=True,qty=1,
                         seq=False,sa_status="SA",bal_acc2=None,point_acc1=None,
                         point_acc2=None,locid=False)
-                    ct.save()
+                        rct.save()
 
-                    cust_obj.cust_point_value = "{:.2f}".format(now_point)
-                    cust_obj.save()
+                        cust_obj.cust_point_value = "{:.2f}".format(now_point)
+                        cust_obj.save()
 
-                    custpt = CustomerPoint(transacno=rew_transacno,date=date.today(),username=fmspw.pw_userlogin,
-                    time=timezone.now(),cust_name=cust_obj.cust_name,cust_code=cust_obj.cust_code,type="Manual Reward",
-                    refno=sa_transacno,ref_source=request.data['ref_source'],isvoid=False,sa_status="SA",void_referenceno=None,
-                    total_point="{:.2f}".format(float(request.data['total_point'])),now_point="{:.2f}".format(now_point),seq=None,remarks=request.data['remarks'],
-                    bal_point="{:.2f}".format(now_point-float(request.data['total_point'])),expired=False,expired_date=None,mac_code=False,logno=False,
-                    approval_user=fmspw.pw_userlogin,cardno=False,bdate=None,pdate=None,expired_point=0,
-                    postransactionno=sa_transacno,postotalamt=0,locid=False,mgm_refno=None,tdate=None)
-                    custpt.save()
-                    rewd = self.get_object(custpt.pk)
-                    serializer_c = ManualRewardPointSerializer(rewd)
-                    
-                    if ct:
-                        ct.transacno = rew_transacno 
-                        ct.total_point = "{:.2f}".format(request.data['total_point'])
-                        ct.save()
+                        custrpt = CustomerPoint(transacno=redem_transacno,date=date.today(),username=fmspw.pw_userlogin,
+                                    time=timezone.now(),cust_name=cust_obj.cust_name,cust_code=cust_obj.cust_code,type="Manual Redeem",
+                                    refno=sa_transacno,ref_source=request.data['ref_source'],isvoid=False,sa_status="SA",void_referenceno=None,
+                                    total_point=-cal_point,now_point=now_point,seq=None,remarks=None,
+                                    bal_point= "{:.2f}".format(custnow_point),expired=False,expired_date=None,mac_code=False,logno=False,
+                                    approval_user=fmspw.pw_userlogin,cardno=False,bdate=None,pdate=None,expired_point=0,
+                                    postransactionno=sa_transacno,postotalamt=0,locid=False,mgm_refno=None,tdate=None)
+                        
+                        custrpt.save()
+                        reed = self.get_object(custrpt.pk)
+                        serializer_c = ManualRewardPointSerializer(reed)
+
+                        if rct:
+                            rct.transacno = redem_transacno 
+                            rct.total_point = -cal_point
+                            rct.save()
+                        
+                    else:
+                        raise Exception('adjustment type is not valid!!.') 
+
 
                     result = {'status': status.HTTP_201_CREATED,"message": "Created Succesfully",
                     'error': False,'data': serializer_c.data}
@@ -27499,5 +27865,584 @@ class ManualRewardPointCustomerViewset(viewsets.ModelViewSet):
          
 
 
+def treatment_deposit(row,fmspw,paytable):
+    # site = fmspw.loginsite
+    dict_obj = row[1].to_dict()
+    # print(dict_obj,"llll")
+    
+    transaction_date = dict_obj['Transaction Date']
+    invoice_no = dict_obj['Invoice Number']
+    cust_phone = dict_obj['Customer Phone']
+    item_no = dict_obj['Item No']
+    item_desc = dict_obj['Item Description']
+    unit_price = dict_obj['Unit Price']
+    total_price = dict_obj['Total Price']
+    total_paid = dict_obj['Total Paid']
+    total_balance_amount = dict_obj['Total Balance Amount']
+    total_outstanding = dict_obj['Total Outstanding']
+    qty = dict_obj['Qty']
+    total_balance_qty = dict_obj['Total Balance Qty']
+    sales_staff = dict_obj['Sales Staff']
+    treatment_staff = dict_obj['Treatment Staff']
+    transaction_type = dict_obj['Transaction Type']
+    remarks = dict_obj['Remarks']
+    payment_type = dict_obj['Payment type']
+    expiry_date = dict_obj['Expiry Date']
+    customer_reference = dict_obj['Customer Reference']
+    customer_name = dict_obj['Customer Name']
+    outlet = dict_obj['Outlet']
 
+    site = ItemSitelist.objects.filter(itemsite_desc=outlet,itemsite_isactive=True).first()
+    if not site:
+        site = fmspw.loginsite
+
+    cust_queryset = Customer.objects.filter(cust_isactive=True).exclude(site_code__isnull=True).only('cust_isactive').order_by('-pk')
+
+    cust_obj = False
+    if customer_reference and customer_name:
+        cust_obj = cust_queryset.filter(cust_name=customer_name, 
+        cust_refer=customer_reference).first()
+
+    if not cust_obj:
+        if cust_phone and customer_name:
+            cust_obj = cust_queryset.filter(cust_name=customer_name, 
+            cust_phone2=cust_phone).first()
+
+    pay_time = False ; pay_date = False
+    if transaction_date:
+        time = datetime.datetime.now()
+        current_time = time.strftime("%H:%M:%S")
+        paydate = datetime.datetime.strptime(str(transaction_date), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+        pay_date = transaction_date
+        pay_time = datetime.datetime.strptime(str(paydate)+" "+str(current_time), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+    
+    stock_obj = False
+    if item_no:
+        link_ids = ItemLink.objects.filter(link_code=item_no,itm_isactive=True).order_by('pk').first()
+        if link_ids:
+            stock_obj = Stock.objects.filter(item_code=link_ids.item_code[:-4], item_isactive=True).first()
+        else:
+            stock_obj = Stock.objects.filter(itm_code=item_no, item_isactive=True).first()
+
+
+    emp_obj = False
+    if sales_staff:
+        emp_obj = Employee.objects.filter(emp_isactive=True,emp_code=sales_staff).first()
+    
+    control_obj = ControlNo.objects.filter(control_description__iexact="Transaction number",Site_Codeid__pk=site.pk).first()
+    if not control_obj:
+        control_obj = ControlNo(control_no="100001",control_description="Transaction number",
+        controldate=date.today(),Site_Codeid=site.pk,site_code=site.itemsite_code)
+        control_obj.save()
+
+
+    refcontrol_obj = ControlNo.objects.filter(control_description__iexact="Reference Non Sales No",Site_Codeid__pk=site.pk).first()
+    if not refcontrol_obj:
+        refcontrol_obj = ControlNo(control_no="100001",control_description="Reference Non Sales No",
+        controldate=date.today(),Site_Codeid=site.pk,site_code=site.itemsite_code)
+        refcontrol_obj.save()
+
+
+    iccontrol_obj = ControlNo.objects.filter(control_description__iexact="ITEM CART",Site_Codeid__pk=site.pk).first()
+    if not iccontrol_obj:
+        iccontrol_obj = ControlNo(control_no="100001",control_description="ITEM CART",
+        controldate=date.today(),Site_Codeid=site.pk,site_code=site.itemsite_code)
+        iccontrol_obj.save()
+
+
+    txcontrolobj = ControlNo.objects.filter(control_description__iexact="Treatment",Site_Codeid__pk=site.pk).first()
+    if not txcontrolobj:
+        txcontrolobj = ControlNo(control_no="100001",control_description="Treatment",
+        controldate=date.today(),Site_Codeid=site.pk,site_code=site.itemsite_code)
+        txcontrolobj.save()
+
+
+
+    data_import = False 
+    # print(pay_time,"pay_time")
+    # print(cust_obj,"cust_obj")
+    # print(stock_obj,"stock_obj")
+    # print(stock_obj.item_div,"stock_obj.item_div")
+    # print(stock_obj.item_type,"stock_obj.item_type")
+    # print(emp_obj,"emp_obj")
+    # print(unit_price,"unit_price")
+    # print(total_price,"total_price")
+    # print(total_paid,"total_paid")
+    # print(qty,"qty")
+    if pay_time and cust_obj and stock_obj and stock_obj.item_div and int(stock_obj.item_div) == 3 and stock_obj.item_type and stock_obj.item_type != 'PACKAGE' and emp_obj and unit_price and total_price and qty and total_balance_qty:
+        if control_obj and refcontrol_obj and iccontrol_obj and txcontrolobj:
+            data_import = True
+            daud_ids = PosDaud.objects.filter(sa_date=pay_date,dt_remark=invoice_no,dt_itemnoid__pk=stock_obj.pk)
+            if not daud_ids:
+                
+                # print(data_import,"data_import")
+
+
+                cart_id = str(iccontrol_obj.control_prefix)+str(iccontrol_obj.Site_Codeid.itemsite_code)+str(iccontrol_obj.control_no)
+                iccontrol_obj.control_no = int(iccontrol_obj.control_no) + 1
+                iccontrol_obj.save() 
+
+                ic_count = 1
+
+                while ic_count > 0:
+                    itemcart_v = ItemCart.objects.filter(cart_id=cart_id)
+                
+                    if itemcart_v:    
+                        ic_control_obj = ControlNo.objects.filter(control_description__iexact="ITEM CART",Site_Codeid__pk=site.pk).first()
+                        cart_id = str(ic_control_obj.control_prefix)+str(ic_control_obj.Site_Codeid.itemsite_code)+str(ic_control_obj.control_no)
+                        ic_control_obj.control_no = int(ic_control_obj.control_no) + 1
+                        ic_control_obj.save() 
+                        ic_count += 1
+                    else:
+                        ic_count = 0   
+                
+                # total_price = unit_price * qty
+
+                #itemcart
+                cart = ItemCart(cart_date=pay_date,phonenumber=cust_obj.cust_phone2,
+                customercode=cust_obj.cust_code,cust_noid=cust_obj,lineno=1,
+                itemcodeid=stock_obj,itemcode=stock_obj.item_code,itemdesc=stock_obj.item_desc,
+                quantity=qty,price=float("{:.2f}".format(float(unit_price))),
+                sitecodeid=site,sitecode=site.itemsite_code,cart_status="Completed",cart_id=cart_id,
+                tax=0,check="New",ratio=100.00,
+                discount_price=float("{:.2f}".format(float(unit_price))),
+                total_price=float("{:.2f}".format(float(total_price))),
+                trans_amt=float("{:.2f}".format(float(total_price))),
+                deposit=float("{:.2f}".format(float(total_paid))),
+                type="Deposit",recorddetail="Service",itemtype=stock_obj.item_type,
+                is_payment=True)
+                cart.save()    
+            
+                
+                sa_transacno = str(control_obj.control_prefix)+str(control_obj.Site_Codeid.itemsite_code)+str(control_obj.control_no)
+                control_obj.control_no = int(control_obj.control_no) + 1
+                control_obj.save()  
+                
+                sa_count = 1
+
+                while sa_count > 0:
+                    poshaud_v = PosHaud.objects.filter(sa_transacno=sa_transacno)
+                    posdaud_v = PosDaud.objects.filter(sa_transacno=sa_transacno)
+                    postaud_v = PosTaud.objects.filter(sa_transacno=sa_transacno)
+                
+                    if poshaud_v or posdaud_v or postaud_v:    
+                        newcontrol_obj = ControlNo.objects.filter(control_description__iexact="Transaction number",Site_Codeid__pk=site.pk).first()
+                        sa_transacno = str(newcontrol_obj.control_prefix)+str(newcontrol_obj.Site_Codeid.itemsite_code)+str(newcontrol_obj.control_no)
+                        newcontrol_obj.control_no = int(newcontrol_obj.control_no) + 1
+                        newcontrol_obj.save() 
+                        sa_count += 1
+                    else:
+                        sa_count = 0   
+
+                sa_ref_count = 1    
+                satransacno_ref = str(refcontrol_obj.control_prefix)+str(refcontrol_obj.Site_Codeid.itemsite_code)+str(refcontrol_obj.control_no)
+                
+                while sa_ref_count > 0:
+                    poshaud_vref = PosHaud.objects.filter(sa_transacno_ref=satransacno_ref)
+                    if poshaud_vref:
+                        refcontrol_obj.control_no = int(refcontrol_obj.control_no) + 1
+                        refcontrol_obj.save()
+                        satransacno_ref = str(refcontrol_obj.control_prefix)+str(refcontrol_obj.Site_Codeid.itemsite_code)+str(refcontrol_obj.control_no)
+                        sa_ref_count += 1
+                    else:
+                        sa_ref_count = 0
+                
+                #PosTaud
+                taud = PosTaud(sa_transacno=sa_transacno,billed_by=fmspw,ItemSIte_Codeid=site,itemsite_code=site.itemsite_code,
+                pay_groupid=paytable.pay_groupid,pay_group=paytable.pay_groupid.pay_group_code,pay_typeid=paytable,pay_type=paytable.pay_code,
+                pay_desc=paytable.pay_description,pay_tendamt=float("{:.2f}".format(float(total_paid))),pay_tendrate=1.0,pay_amt=float("{:.2f}".format(float(total_paid))),pay_amtrate=1.0,pay_status=1,dt_lineno=1,
+                pay_actamt=float("{:.2f}".format(float(total_paid))),subtotal=float("{:.2f}".format(float(total_price))) if total_price else 0.0,paychange=0.0,
+                tax=0, discount_amt=0,
+                billable_amount=float("{:.2f}".format(float(total_paid))) if total_paid else 0.0,
+                pay_gst_amt_collect=0,pay_gst=0,pay_rem1=payment_type if payment_type else None,pay_rem4=remarks if remarks else None)
+                
+                taud.sa_date = pay_date
+                taud.sa_time = pay_time
+                taud.save() 
+
+                #DepositType 
+                depo_type = DepositType(sa_transacno=sa_transacno,pay_group=paytable.pay_groupid.pay_group_code,
+                pay_type=paytable.pay_code,amount="{:.2f}".format(float(total_paid)),card_no=False,pay_desc=paytable.pay_description,
+                pay_tendcurr=None,pay_tendrate=1.0,site_code=site.itemsite_code,pos_taud_lineno=1) 
+                # print(depo_type.id,"depo_type") 
+                
+                if taud:
+                    depo_type.save() 
+
+                record_detail_type = "SERVICE"
+                # outstanding_acc =  float(total_price) - float(total_paid)
+                outstanding_acc =  total_outstanding
+
+
+                sales = "";service = ""
+                if emp_obj:
+                    sales = emp_obj.display_name
+            
+
+                #cart def
+                c = cart
+
+                t2_tax_amt = 0
+                t2_tax_code = ''
+                ssttax_systemids = Systemsetup.objects.filter(title='SST Tax Setting',
+                value_name='SST Tax Setting',isactive=True).first()
+                if ssttax_systemids and ssttax_systemids.value_data == 'True':
+                    if c.itemcodeid and c.itemcodeid.t2_tax_code:
+                        ssttax_ids =TaxType2TaxCode.objects.filter(item_code=c.itemcodeid.t2_tax_code,
+                        tax_desc="SST").first()
+                        if ssttax_ids and ssttax_ids.tax_rate_percent:
+                            per_div = (ssttax_ids.tax_rate_percent / 100)
+                            if site and site.is_exclusive == True:
+                                t2_tax_amt = float(c.deposit) * per_div
+                            else:
+                                per_div = (ssttax_ids.tax_rate_percent / 100) + 1 
+                                sstdt_deposit = float(c.deposit) / per_div
+                                t2_tax_amt = float(c.deposit) - sstdt_deposit
+
+                            t2_tax_code = c.itemcodeid.t2_tax_code
+                
+                    
+                
+                
+                #PosDaud
+                dtl = PosDaud(sa_transacno=sa_transacno,dt_status="SA",dt_itemnoid=stock_obj,
+                dt_itemno=str(stock_obj.item_code)+"0000",dt_itemdesc=stock_obj.item_desc,dt_price=c.price,
+                dt_promoprice="{:.2f}".format(float(unit_price)),dt_amt="{:.2f}".format(float(total_price)),dt_qty=qty,
+                dt_discamt=0,
+                dt_discpercent=0,dt_Staffnoid=emp_obj,dt_staffno=emp_obj.emp_code,
+                dt_staffname=emp_obj.display_name,
+                dt_discuser=fmspw.pw_userlogin,dt_combocode=None,ItemSite_Codeid=site,itemsite_code=site.itemsite_code,
+                dt_transacamt="{:.2f}".format(float(total_price)),dt_deposit="{:.2f}".format(float(total_paid)),dt_lineno=1,itemcart=cart,
+                st_ref_treatmentcode=None,record_detail_type=record_detail_type,gst_amt_collect=0,
+                topup_outstanding=outstanding_acc if outstanding_acc and outstanding_acc > 0 else 0,dt_remark=invoice_no,isfoc=False,item_remarks=None,
+                dt_uom=None,first_trmt_done=False,item_status_code='',
+                staffs=sales +" "+"/"+" "+ service,dt_discdesc='',
+                t2_tax_code=t2_tax_code,t2_tax_amt="{:.4f}".format(float(t2_tax_amt)))
+                #appt_time=app_obj.appt_fr_time,                
+                #st_ref_treatmentcode=treatment_parentcode,
+                dtl.save()
+                dtl.sa_date = pay_date
+                dtl.sa_time = pay_time
+                # print(dtl.sa_date,"dtl")
+                dtl.save()
+
+                #multistaff
+                m_deposit = (float(c.deposit)/100) * float(cart.ratio) 
+                multi = Multistaff(sa_transacno=sa_transacno,item_code=str(c.itemcodeid.item_code)+"0000",
+                emp_code=emp_obj.emp_code,ratio=cart.ratio,salesamt="{:.2f}".format(float(cart.trans_amt)),type=None,isdelete=False,role=1,
+                dt_lineno=c.lineno,salescommpoints=stock_obj.salescommpoints,deposit=m_deposit,gt1deposit=0)
+                multi.save()  
+                
+
+                if int(c.itemcodeid.Item_Divid.itm_code) == 3 and c.itemcodeid.Item_Divid.itm_desc == 'SERVICES' and c.itemcodeid.Item_Divid.itm_isactive == True:
+                    tx_controlobj = ControlNo.objects.filter(control_description__iexact="Treatment",Site_Codeid__pk=site.pk).first()
+                    
+                    treatment_parentcode = "TRM"+str(tx_controlobj.control_prefix)+str(tx_controlobj.Site_Codeid.itemsite_code)+str(tx_controlobj.control_no)
+                    tx_controlobj.control_no = int(tx_controlobj.control_no) + 1
+                    tx_controlobj.save()
+                    
+                    desc = "Total Service Amount : "+str("{:.2f}".format(float(c.trans_amt)))
+
+                    #treatment Account creation
+                    treatacc = TreatmentAccount(Cust_Codeid=cust_obj,cust_code=cust_obj.cust_code,
+                    description=desc,type="Deposit",amount="{:.2f}".format(float(c.deposit)),
+                    balance="{:.2f}".format(float(total_balance_amount)),User_Nameid=fmspw,
+                    user_name=fmspw.pw_userlogin,ref_transacno=sa_transacno,sa_transacno=sa_transacno,
+                    qty=c.quantity,outstanding="{:.2f}".format(float(outstanding_acc)) if outstanding_acc is not None and outstanding_acc > 0 else 0,deposit="{:.2f}".format(float(c.deposit)),
+                    treatment_parentcode=treatment_parentcode,sa_status="SA",
+                    cas_name=fmspw.pw_userlogin,sa_staffno=emp_obj.emp_code,
+                    sa_staffname=emp_obj.display_name,dt_lineno=c.lineno,
+                    Site_Codeid=site,site_code=site.itemsite_code,itemcart=c,
+                    )
+                    # package_code=package_code
+                    treatacc.save()
+                    treatacc.sa_date = pay_date
+                    treatacc.sa_time = pay_time
+                    treatacc.save()
+
+                    if '0' in str(c.quantity):
+                        no = str(c.quantity).split('0')
+                        if no[0] == '':
+                            number = no[1]
+                        else:
+                            number = c.quantity
+                    else:
+                        number = c.quantity
+
+                    dtl_st_ref_treatmentcode = "";dtl_first_trmt_done = False
+                    # if c.itemcodeid.Item_Divid.itm_code == '3':
+                    if c.is_foc == True:
+                        course_val = c.itemdesc
+                        isfoc_val = True
+                    else:
+                        course_val = c.itemdesc 
+                        isfoc_val = False
+                    
+                    expiry = None
+                    if c.itemcodeid.service_expire_active == True:
+                        month = c.itemcodeid.service_expire_month
+                        if month:
+                            current_date = datetime.datetime.strptime(str(date.today()), "%Y-%m-%d")
+                            expiry = current_date + relativedelta(months=month)
+                    
+                    treat_type = "N"
+                    treatment_limit_times = None
+                    flexipoints = None
+
+                    # if c.itemcodeid.limitservice_flexionly == True:
+                    #     treat_type = "FFi"
+                    #     treatment_limit_times = 0
+                    #     if c.itemcodeid.treatment_limit_active == True:
+                    #         treatment_limit_times = c.itemcodeid.treatment_limit_count
+                    
+                    
+                    # if c.is_flexi == True:
+                    #     expiry = c.treat_expiry
+                    #     treat_type = c.treat_type
+                    #     treatment_limit_times = c.treatment_limit_times
+                    #     flexipoints = c.itemcodeid.flexipoints if c.itemcodeid.flexipoints else None
+                    check = list(range(1, int(total_balance_qty)+1))
+
+                    for i in range(1,int(number)+1):
+                        treat = c
+                        Price = c.trans_amt
+                        Unit_Amount = Price / c.quantity
+                        
+
+                        if i in check:
+                            status = "Open"
+                        else:
+                            status = "Done"    
+                        
+                        times = str(i).zfill(2)
+                        treatment_no = str(c.quantity).zfill(2)
+                        
+                        if i == int(c.quantity):
+                            lval = float(Price) - (float("{:.2f}".format(Unit_Amount)) * (c.quantity -1))
+                            Unit_Amount = lval
+                            
+                        # tmptrd_ids = Tmptreatment.objects.filter(itemcart=c,times=times).order_by('pk').first()
+
+                        # if tmptrd_ids:
+                        #     treatmentid = Treatment(treatment_code=str(treatment_parentcode)+"-"+str(times),
+                        #     treatment_parentcode=treatment_parentcode,course=tmptrd_ids.course,times=times,
+                        #     treatment_no=treatment_no,price="{:.2f}".format(float(tmptrd_ids.price)),unit_amount="{:.2f}".format(float(tmptrd_ids.unit_amount)),Cust_Codeid=treat.cust_noid,
+                        #     cust_code=treat.customercode,cust_name=treat.cust_noid.cust_name,
+                        #     status="Open",item_code=str(treat.itemcodeid.item_code)+"0000",Item_Codeid=treat.itemcodeid,
+                        #     sa_transacno=sa_transacno,sa_status="SA",type=treat_type,trmt_is_auto_proportion=False,
+                        #     dt_lineno=c.lineno,site_code=site.itemsite_code,Site_Codeid=site,isfoc=tmptrd_ids.isfoc,
+                        #     treatment_account=treatacc,service_itembarcode=str(treat.itemcodeid.item_code)+"0000",
+                        #     expiry=expiry,treatment_limit_times=treatment_limit_times,
+                        #     flexipoints=flexipoints)
+                        # else:
+                        treatmentid = Treatment(treatment_code=str(treatment_parentcode)+"-"+str(times),
+                        treatment_parentcode=treatment_parentcode,course=course_val,times=times,
+                        treatment_no=treatment_no,price="{:.2f}".format(float(Price)),unit_amount="{:.2f}".format(float(Unit_Amount)),Cust_Codeid=treat.cust_noid,
+                        cust_code=treat.customercode,cust_name=treat.cust_noid.cust_name,
+                        status=status,item_code=str(treat.itemcodeid.item_code)+"0000",Item_Codeid=treat.itemcodeid,
+                        sa_transacno=sa_transacno,sa_status="SA",type=treat_type,trmt_is_auto_proportion=False,
+                        dt_lineno=c.lineno,site_code=site.itemsite_code,Site_Codeid=site,isfoc=isfoc_val,
+                        treatment_account=treatacc,service_itembarcode=str(treat.itemcodeid.item_code)+"0000",
+                        expiry=expiry,treatment_limit_times=treatment_limit_times,
+                        flexipoints=flexipoints)
+
+                        treatmentid.save() 
+                        treatmentid.treatment_date = pay_date
+                        treatmentid.save() 
+                        
+                        if treatmentid.status == "Open":
+                            stdids = Treatmentids.objects.filter(treatment_int=treatmentid.pk)
+                            if not stdids: 
+                                tid =  Treatmentids(treatment_parentcode=treatment_parentcode,
+                                treatment_int=treatmentid.pk).save()
+
+                            if treatmentid.expiry:
+                                dxsplit = str(treatmentid.expiry).split(" ")
+                                expdate = datetime.datetime.strptime(str(dxsplit[0]), '%Y-%m-%d').strftime("%d/%m/%Y")
+                                dtl.dt_itemdesc = dtl.dt_itemdesc+" "+"Expiry Date : "+str(expdate)
+
+                            dtl.save()    
+                    
+
+                    if treatment_parentcode:
+                        searchids = TreatmentPackage.objects.filter(treatment_parentcode=treatment_parentcode)
+                        if not searchids:
+                            o_ids = Treatment.objects.filter(treatment_parentcode=treatment_parentcode).order_by('pk').count()
+                            tptdone_ids = Treatment.objects.filter(treatment_parentcode=treatment_parentcode,status="Done").order_by('pk').count()
+                            tptcancel_ids = Treatment.objects.filter(treatment_parentcode=treatment_parentcode,status="Cancel").order_by('pk').count()
+                            tptopen_ids = Treatment.objects.filter(treatment_parentcode=treatment_parentcode,status="Open").order_by('pk').count()
+                            fu_ids =  Treatment.objects.filter(treatment_parentcode=treatment_parentcode,times="01").first()
+                            q = str(c.quantity).zfill(2)
+                            ls_ids = Tmptreatment.objects.filter(itemcart=c,isfoc=False).order_by('-pk').first()
+
+                            trmtAccObj = TreatmentAccount.objects.filter(treatment_parentcode=treatment_parentcode).order_by('-sa_date','-sa_time','-id').first()
+                            
+                            
+                            tr = TreatmentPackage(treatment_parentcode=treatment_parentcode,
+                            item_code=str(treatmentid.Item_Codeid.item_code)+"0000",course=treatmentid.course,
+                            treatment_no=str(o_ids).zfill(2),open_session=tptopen_ids,done_session=tptdone_ids,
+                            cancel_session=tptcancel_ids,expiry_date=treatmentid.expiry,unit_amount=ls_ids.unit_amount if ls_ids else treatmentid.unit_amount,
+                            customerid=cust_obj,cust_name=treatmentid.cust_name,cust_code=treatmentid.cust_code,
+                            treatment_accountid=treatmentid.treatment_account,totalprice=treatmentid.price,
+                            type=treatmentid.type,
+                            Item_Codeid=treatmentid.Item_Codeid,treatment_limit_times=treatmentid.treatment_limit_times,
+                            Site_Codeid=treatmentid.Site_Codeid,site_code=treatmentid.site_code,
+                            sa_transacno=sa_transacno,lastsession_unit_amount=fu_ids.unit_amount,
+                            balance="{:.2f}".format(float(trmtAccObj.balance)),outstanding="{:.2f}".format(float(trmtAccObj.outstanding)),
+                            )
+                            tr.save()   
+                            # datetimed = datetime.datetime.strptime(str(pay_date)+" "+str(time.strftime("%H:%M:%S")), "%Y-%m-%d %H:%M:%S")
+                            tr.treatment_date = pay_time
+                            tr.save()
+
+                            treatmids = list(set(Treatment.objects.filter(
+                            treatment_parentcode=treatment_parentcode).filter(~Q(status="Open")).only('pk').order_by('pk').values_list('pk', flat=True).distinct()))
+
+                            Treatmentids.objects.filter(treatment_parentcode=treatment_parentcode,
+                            treatment_int__in=treatmids).delete()
+                            
+                            p_ids = list(set(Treatmentids.objects.filter(treatment_parentcode=treatment_parentcode).values_list('treatment_int', flat=True).distinct()))
+                            op_ids = list(Treatment.objects.filter(
+                            treatment_parentcode=treatment_parentcode).filter(Q(status="Open"),~Q(pk__in=p_ids)).only('pk').order_by('pk').values_list('pk', flat=True).distinct())
+                            if op_ids:
+                                for j in op_ids:
+                                    stf_ids = Treatmentids.objects.filter(treatment_int=j)
+                                    if not stf_ids: 
+                                        Treatmentids(treatment_parentcode=treatment_parentcode,
+                                                    treatment_int=j).save()
+
+                    
+
+                nscontrol_obj = ControlNo.objects.filter(control_description__iexact="Reference Non Sales No",Site_Codeid__pk=site.pk).first()
+                            
+                sa_transacno_refval = str(nscontrol_obj.control_prefix)+str(nscontrol_obj.Site_Codeid.itemsite_code)+str(nscontrol_obj.control_no)
+                nscontrol_obj.control_no = int(nscontrol_obj.control_no) + 1
+                nscontrol_obj.save()      
+                sa_transacno_type = "Non Sales"
+
+                cart.sa_transacno = sa_transacno
+                cart.save()
+
+                rsub_systemids = Systemsetup.objects.filter(title='ROUNDING',
+                value_name='Rounding at SubTotal',isactive=True).first()
+                billable_amount = total_paid
+
+                if rsub_systemids and rsub_systemids.value_data == 'True':
+                    round_val = float(round_calc(billable_amount, site)[0]) # round()
+                    sa_Round = float(round_calc(billable_amount, site)[1])
+                else:
+                    round_val = billable_amount
+                    sa_Round = 0
+
+                # billable_amount = float(billable_amount) + round_val 
+                billable_amount = round_val 
+
+                hdr = PosHaud(cas_name=fmspw.pw_userlogin,sa_transacno=sa_transacno,sa_status="SA",
+                sa_totamt="{:.2f}".format(float(total_paid)),sa_totqty=qty,sa_totdisc=0,sa_totgst=0,
+                sa_staffnoid=emp_obj,sa_staffno=emp_obj.emp_code,sa_staffname=emp_obj.display_name,sa_custnoid=cust_obj,sa_custno=cust_obj.cust_code,
+                sa_custname=cust_obj.cust_name,sa_discuser=fmspw.pw_userlogin,sa_discamt=0,sa_disctotal=0,ItemSite_Codeid=site,itemsite_code=site.itemsite_code,
+                sa_depositamt="{:.2f}".format(float(total_paid)),sa_transacamt="{:.2f}".format(float(total_price)),sa_round="{:.2f}".format(float(sa_Round)),total_outstanding="{:.2f}".format(float(outstanding_acc)) if outstanding_acc and outstanding_acc > 0 else 0,
+                trans_user_login=fmspw.pw_password,trans_user_loginid=fmspw,sa_transacno_ref=sa_transacno_refval,sa_transacno_type=sa_transacno_type,
+                issuestrans_user_login=fmspw.pw_userlogin,trans_remark="Imported",payment_remarks=invoice_no,
+                sa_transacno_title=transaction_type)
+                
+                # appt_time=app_obj.appt_fr_time,
+
+                hdr.save()
+                hdr.sa_date = pay_date
+                hdr.sa_time = pay_time
+                hdr.save()
+            
+
+    return data_import
+
+
+
+class TreatmentBalanceImportAPIView(GenericAPIView):
+    authentication_classes = [ExpiringTokenAuthentication]
+    permission_classes = [IsAuthenticated & authenticated_only]
+    serializer_class = []
+    
+    @transaction.atomic
+    def post(self, request):
+        try:  
+            with transaction.atomic(): 
+                fmspw = Fmspw.objects.filter(user=self.request.user,pw_isactive=True).first()
+                
+                #validations
+                if not 'treatment_file' in request.data or not request.data['treatment_file'] or not request.data:
+                    raise Exception('Please give File!!.') 
+
+                iccontrol_obj = ControlNo.objects.filter(control_description__iexact="ITEM CART",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                if not iccontrol_obj:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Item Cart Control No does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+
+                refcontrol_obj = ControlNo.objects.filter(control_description__iexact="Reference Non Sales No",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                if not refcontrol_obj:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Reference Non Sales Control No does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+
+                control_obj = ControlNo.objects.filter(control_description__iexact="Transaction number",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                if not control_obj:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Transaction Control No does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                
+                paytable = Paytable.objects.filter(pay_code="OB",pay_isactive=True).first()
+                if not paytable:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,
+                    "message":"Paytable ID is does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+
+                tx_controlobj = ControlNo.objects.filter(control_description__iexact="Treatment",Site_Codeid__pk=fmspw.loginsite.pk).first()
+                if not tx_controlobj:
+                    result = {'status': status.HTTP_400_BAD_REQUEST,"message":"Treatment Control No does not exist!!",'error': True} 
+                    return Response(result, status=status.HTTP_400_BAD_REQUEST) 
+                     
+                
+
+                file_obj = request.data['treatment_file']
+                # print(file_obj,"file_obj")
+                file_content = file_obj.read()
+
+                excel_data_df = pd.read_excel(file_content,  engine='openpyxl', na_filter=False)
+                # print(excel_data_df,"excel_data_df")
+                # = excel_data_df.index
+                col_lst = excel_data_df.columns.ravel()
+                # print(col_lst,"col_lst")
+
+                # for index, row in excel_data_df.iterrows():
+                #     # print(index,"kkk")
+                #     print(excel_data_df.loc[index],"lll")
+                failed_rows = [] ; success_import = False
+
+                for row in excel_data_df.iterrows():
+                    # print(row,"row")
+                    call = treatment_deposit(row,fmspw,paytable)
+                    # print(call,"call")
+                    if call == False:
+                        # print(row[0],"row")
+                        # print("pass")
+                        dict_obj = row[1].to_dict()
+                        dict_obj.update({'row': row[0] + 2})
+                        failed_rows.append(dict_obj)
+                    else:
+                        success_import = True
+
+                    # for col in col_lst:
+                    #     print(dict_obj[col])
+                
+                if success_import == True:
+                    msg = "Import Created Succesfully"
+                else:
+                    msg = "Import Failed"
+
+                result = {'status': status.HTTP_201_CREATED,"message":msg,
+                'error': False, 'failed_rows': failed_rows}
+                return Response(result, status=status.HTTP_201_CREATED)            
+         
+        except Exception as e:
+            invalid_message = str(e)
+            return general_error_response(invalid_message)
+         
                

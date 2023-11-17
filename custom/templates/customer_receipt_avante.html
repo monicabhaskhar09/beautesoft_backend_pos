@@ -115,6 +115,8 @@ body{
 </style>
 </head>
 {% load static %}
+{% load custom_tags %}
+
 <body>
 
   <div class="container-fluid">
@@ -211,11 +213,14 @@ body{
             {% if d.isfoc and d.holditemqty is None %}
               <td style="text-align: left;width: 40%;">{{ d.dt_itemdesc }}</td>
             {% elif d.dt_status == "SA" and d.record_detail_type == "PACKAGE" %}
-              <td style="text-align: left;width: 40%">{{ d.dt_itemdesc }} &#8209; {{ packages }}</td>  
+              <!-- {{ packages }} -->
+              <td style="text-align: left;width: 40%">{{ d.dt_itemdesc }} &#8209; {% get_packages d %}</td>  
             {% elif d.dt_status == "SA" and d.record_detail_type == "TD" %}
               <td style="text-align: left;width: 40%">{{ d.record_detail_type }} &#8209; {{ d.dt_itemdesc }}</td>
             {% elif d.dt_status == "SA" and d.record_detail_type == 'TP SERVICE' or d.record_detail_type == 'TP PRODUCT' or d.record_detail_type == 'TP PREPAID' %}
               <td style="text-align: left;width: 40%">{{ d.record_detail_type }} &#8209; {{ d.dt_itemdesc }}</td>
+            {% elif d.dt_status == "VT" and d.record_detail_type == "PACKAGE" %}
+              <td style="text-align: left;width: 40%">{{ d.dt_itemdesc }} - {% get_packages d %}</td>
             {% elif d.dt_status == "VT" %}
               <td style="text-align: left;width: 40%">{{ d.dt_itemdesc }}</td>
             {% elif d.dt_status == "VT" and d.record_detail_type == "TD"%}
@@ -431,13 +436,16 @@ body{
               <p style="font-size: 14px;"> {% if taud.pay_rem4 %} {{ taud.pay_rem4 }} {% else %} {% endif %} </p>
             </tr> 
           {% endfor %} 
-
-          <p style="font-size: 14px;"> {% if footer1 %} {{ footer1 }} {% else %} {% endif %} </p>
+           
+          <!-- {{ footer1|removetags:"br"|safe }} -->
+          
+          <!-- <p style="font-size: 14px;"> {% if footer1 %}  {% else %} {% endif %} </p>
           <p style="font-size: 14px;"> {% if footer2 %} {{ footer2 }} {% else %} {% endif %} </p>
           <p style="font-size: 14px;">{% if footer3 %} {{ footer3 }} {% else %} {% endif %} </p>
           <p style="font-size: 14px;">{% if footer4 %} {{ footer4 }} {% else %} {% endif %}</p>
           <p style="font-size: 14px;">{% if footer5 %} {{ footer5 }} {% else %} {% endif %}</p>
           <p style="font-size: 14px;">{% if footer6 %} {{ footer6 }} {% else %} {% endif %}</p>
+         -->
         </div>
   
       </div>

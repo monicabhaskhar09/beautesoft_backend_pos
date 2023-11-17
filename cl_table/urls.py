@@ -22,6 +22,7 @@ router.register(r'onlinebooking', views.OnlineBookingDateSlotsViewset, basename=
 router.register(r'invoicetemplateconfig', views.InvoiceTemplateConfigViewset, basename='invoicetemplateconfig')
 router.register(r'appointbooking', views.AppointBookingDateSlotsViewset, basename='appointbooking')
 router.register(r'ecomappointbooking', views.EcomAppointBookingViewset, basename='ecomappointbooking')
+router.register(r'customerpointslist', views.CustomerPointsListViewset, basename='customerpointslist')
 
 
 urlpatterns = [
@@ -135,6 +136,7 @@ urlpatterns = [
     path('be/api/prepaidvalidperiod/', views.PrepaidValidperiodAPIView.as_view(), name='prepaidvalidperiod'),
     path('be/api/customerreceiptprintbeforecheckout/', views.CustomerReceiptPrintBeforeCheckoutList.as_view(), name='customerreceiptprintbeforecheckout'),
     path('be/api/availableservicetimeslots/', views.AvailableTimeSlotsAPIView.as_view(), name='availableservicetimeslots'),
+    path('be/api/treatmentbalanceimport/', views.TreatmentBalanceImportAPIView.as_view(), name='treatmentbalanceimport'),
 
 
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

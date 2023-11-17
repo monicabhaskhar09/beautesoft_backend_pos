@@ -803,8 +803,8 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                                                     valuedata = 'TRUE'
 
                                                     sys_ids = Systemsetup.objects.filter(title='Stock Available',value_name='Stock Available').first() 
-                                                    if sys_ids:
-                                                        valuedata = sys_ids.value_data
+                                                    if sys_ids and sys_ids.value_data:
+                                                        valuedata = str(sys_ids.value_data).upper()
 
                                                     currenttime = timezone.now()
                                                     currentdate = timezone.now().date()
@@ -1475,7 +1475,24 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                         decontrolobj.save()
 
                     if c.batch_sno:
-                        dtl.dt_itemdesc = dtl.dt_itemdesc+" "+"SN-"+str(c.batch_sno)
+                        bat_ser =''
+                        if c.quantity and c.quantity > 1:
+                            bat_qty = c.quantity - 1
+                            # print(bat_qty,"bat_qty")
+                            batchso_ext_ids = ItemBatchSno.objects.filter(availability=True,site_code=site.itemsite_code,
+                            item_code=c.itemcodeid.item_code,uom=dtl.dt_uom).filter(~Q(batch_sno=c.batch_sno)).order_by('pk','batch_sno')[:bat_qty]
+                            # print(batchso_ext_ids,"batchso_ext_ids")
+                            bat_ser = ','.join([v.batch_sno for v in batchso_ext_ids if v.batch_sno])
+                            if batchso_ext_ids:
+                                for bs in batchso_ext_ids:
+                                    bs.availability = False
+                                    bs.itemcart = c.pk
+                                    bs.save()
+                                    if bs.pk not in itmbatchsno_id_lst:
+                                        itmbatchsno_id_lst.append(bs.pk)
+
+
+                        dtl.dt_itemdesc = dtl.dt_itemdesc+" "+"SN-"+str(c.batch_sno)+","+bat_ser
                         batchso_ids = ItemBatchSno.objects.filter(batch_sno__icontains=c.batch_sno,
                         availability=True,site_code=site.itemsite_code).first()
                         if batchso_ids and batchso_ids.exp_date:
@@ -1485,6 +1502,7 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                         
                         if batchso_ids:
                             batchso_ids.availability = False
+                            batchso_ids.itemcart = c.pk
                             batchso_ids.save()
                             if batchso_ids.pk not in itmbatchsno_id_lst:
                                 itmbatchsno_id_lst.append(batchso_ids.pk)
@@ -1494,8 +1512,8 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                     valuedata = 'TRUE'
 
                     sys_ids = Systemsetup.objects.filter(title='Stock Available',value_name='Stock Available').first() 
-                    if sys_ids:
-                        valuedata = sys_ids.value_data
+                    if sys_ids and sys_ids.value_data:
+                        valuedata = str(sys_ids.value_data).upper()
 
                     currenttime = timezone.now()
                     currentdate = timezone.now().date()
@@ -1550,7 +1568,7 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                         stockreduce = False
                         if valuedata == 'TRUE':
                             # if (batchids and int(batchids.qty) >= int(i.qty)) or (obatchids and int(obatchids.qty) >0 and int(uom_ids.uom_unit) >= qtytodeduct):
-                            if (batchids and int(batchids.qty) >= int(i.qty)) or (check_obatchqty > 0):
+                            if (batchids and int(batchids.qty) >= int(qtytodeduct)) or (check_obatchqty > 0):
                                 stockreduce = True
                         else:
                             stockreduce = True
@@ -2097,6 +2115,7 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
 
                         treatmentid.save() 
                         treatmentid.treatment_date = pay_date
+                        treatmentid.save()
                         if treatmentid:
                             stdids = Treatmentids.objects.filter(treatment_int=treatmentid.pk)
                             if not stdids: 
@@ -2304,8 +2323,8 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                                 valuedata = 'TRUE'
 
                                 sys_ids = Systemsetup.objects.filter(title='Stock Available',value_name='Stock Available').first() 
-                                if sys_ids:
-                                    valuedata = sys_ids.value_data
+                                if sys_ids and sys_ids.value_data:
+                                    valuedata = str(sys_ids.value_data).upper()
 
                                 currenttime = timezone.now()
                                 currentdate = timezone.now().date()
@@ -2605,6 +2624,7 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                                 
                                 e_treatids.save() 
                                 e_treatids.treatment_date = pay_date
+                                e_treatids.save()
 
                                 if e_treatids: 
                                     stdsids = Treatmentids.objects.filter(treatment_int=e_treatids.pk)
@@ -2657,6 +2677,8 @@ def invoice_deposit(self, request, depo_ids, sa_transacno, cust_obj, outstanding
                                             service_itembarcode=ct.service_itembarcode,isfoc=ct.isfoc,Trmt_Room_Codeid=ct.Trmt_Room_Codeid,
                                             trmt_room_code=ct.trmt_room_code,trmt_is_auto_proportion=ct.trmt_is_auto_proportion,
                                             treatment_account=ct.treatment_account)
+                                            treatids.save()
+                                            treatids.treatment_date = pay_date
                                             treatids.save()
                                             if treatids:
                                                 stfdsids = Treatmentids.objects.filter(treatment_int=treatids.pk)
@@ -3079,11 +3101,17 @@ def invoice_topup(self, request, topup_ids,sa_transacno, cust_obj, outstanding, 
                     if pos_ids:
                         pa_trasac = round(pos_ids.price * pos_ids.qty)
                         pa_disc = pos_ids.unit_price - pa_trasac
-                        
+
+                    depotpamt_acc_ids = PrepaidAccount.objects.filter(pp_no=c.prepaid_account.pp_no,
+                    line_no=c.prepaid_account.line_no,sa_status__in=('','DEPOSIT', 'TOPUP'),package_code_lineno=c.prepaid_account.package_code_lineno).only('pp_no').aggregate(Sum('topup_amt'))
                 else:
                     ulast_preids = PrepaidAccount.objects.filter(pp_no=c.prepaid_account.pp_no,
                     line_no=c.prepaid_account.line_no,
                     cust_code=cust_obj.cust_code).order_by('-pk').first()
+
+                    depotpamt_acc_ids = PrepaidAccount.objects.filter(pp_no=c.prepaid_account.pp_no,
+                    line_no=c.prepaid_account.line_no,sa_status__in=('','DEPOSIT', 'TOPUP')).only('pp_no').aggregate(Sum('topup_amt'))
+  
 
                 ulast_preids.status=False
                 ulast_preids.save()
@@ -3120,19 +3148,34 @@ def invoice_topup(self, request, topup_ids,sa_transacno, cust_obj, outstanding, 
                     pacc_ids = PrepaidAccountCondition.objects.filter(pp_no=c.prepaid_account.pp_no,
                     pos_daud_lineno=c.prepaid_account.line_no,p_itemtype="Inclusive",
                     package_code_lineno=c.prepaid_account.package_code_lineno).order_by('pk')
+
+                  
                 else:
                     pacc_ids = PrepaidAccountCondition.objects.filter(pp_no=c.prepaid_account.pp_no,
                     pos_daud_lineno=c.prepaid_account.line_no,p_itemtype="Inclusive").order_by('pk')
+
+                  
                 
                 if pacc_ids: 
                     pp_total = c.prepaid_account.pp_total  
                     topup_amt = c.deposit
+                    if depotpamt_acc_ids and depotpamt_acc_ids['topup_amt__sum'] > 0:
+                        deposit_bal = depotpamt_acc_ids['topup_amt__sum']
+                    else:
+                        deposit_bal = 0
+
                     for preacct in pacc_ids:
-                       
+                        if not preacct.topup_remain:
+                            cal_tpremain = (float(preacct.amount) / pp_total) * deposit_bal
+                            preacct.topup_remain = round(cal_tpremain)
+                            preacct.save()
+    
+                            
                         if outstanding == 0:
                             remain_cal = float(preacct.amount) - preacct.topup_remain
                             topup_remainval = preacct.topup_remain + remain_cal
-                            tp_remain = preacct.remain + remain_cal
+                            # tp_remain = preacct.remain + remain_cal
+                            tp_remain = float(topup_remainval) - preacct.use_amt
 
                             preacct.topup_remain = topup_remainval
                             preacct.remain = tp_remain
@@ -3141,7 +3184,8 @@ def invoice_topup(self, request, topup_ids,sa_transacno, cust_obj, outstanding, 
                             remain_cal = round(tpacc_remain)
 
                             topup_remainval = preacct.topup_remain + remain_cal
-                            tp_remain = preacct.remain + remain_cal
+                            # tp_remain = preacct.remain + remain_cal
+                            tp_remain = float(topup_remainval) - preacct.use_amt
 
                             preacct.topup_remain = topup_remainval
                             preacct.remain = tp_remain
@@ -3606,7 +3650,10 @@ def invoice_sales(self, request, sales_ids,sa_transacno, cust_obj, outstanding, 
                                 Site_Codeid=ct.Site_Codeid,site_code=ct.site_code,type=ct.type,treatment_limit_times=ct.treatment_limit_times,
                                 service_itembarcode=ct.service_itembarcode,isfoc=ct.isfoc,Trmt_Room_Codeid=ct.Trmt_Room_Codeid,
                                 trmt_room_code=ct.trmt_room_code,trmt_is_auto_proportion=ct.trmt_is_auto_proportion,
-                                treatment_account=ct.treatment_account).save()
+                                treatment_account=ct.treatment_account)
+                                treatids.save()
+                                treatids.treatment_date = pay_date
+                                treatids.save()
                                 if treatids:
                                     stfd_ids = Treatmentids.objects.filter(treatment_int=treatids.pk)
                                     if not stfd_ids: 
@@ -4127,13 +4174,14 @@ def invoice_sales(self, request, sales_ids,sa_transacno, cust_obj, outstanding, 
                 #auto Treatment Usage transactions
                 now = datetime.datetime.now()
                 s1 = str(now.strftime("%Y/%m/%d %H:%M:%S"))
-                usagelevel_ids = Usagelevel.objects.filter(service_code=cl.service_itembarcode,
+                # cl.service_itembarcode
+                usagelevel_ids = Usagelevel.objects.filter(service_code=str(c.itemcode)+"0000",
                 isactive=True).order_by('-pk') 
                 valuedata = 'TRUE'
 
                 sys_ids = Systemsetup.objects.filter(title='Stock Available',value_name='Stock Available').first() 
-                if sys_ids:
-                    valuedata = sys_ids.value_data
+                if sys_ids and sys_ids.value_data:
+                    valuedata = str(sys_ids.value_data).upper()
 
                        
 

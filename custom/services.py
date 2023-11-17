@@ -356,6 +356,15 @@ def GeneratePDF(self,request, sa_transacno):
     else:
         credit_amt = "0.00"  
     # print(credit,"credit") 
+
+    voucher_ids = VoucherRecord.objects.filter(isvalid=True,cust_code=hdr[0].sa_custno,
+    used=False).order_by('-pk').aggregate(amount=Coalesce(Sum('value'), 0))
+
+    if voucher_ids and voucher_ids['amount'] > 0.0:
+        voucher_amt = "{:.2f}".format(voucher_ids['amount'])
+    else:
+        voucher_amt = "0.00"
+
     custsign_ids = Tempcustsign.objects.filter(transaction_no=sa_transacno).order_by("-pk").first()
     # print(custsign_ids,"custsign_ids") 
     path_custsign = None
@@ -435,9 +444,13 @@ def GeneratePDF(self,request, sa_transacno):
     if prepaidlst != []:
         showprepaid = True
 
-
+    void_refno = ""
     if hdr[0].isvoid == True and hdr[0].sa_status == "VT":
         showvoidreason = True
+        sa_ids = PosHaud.objects.filter(sa_transacno=hdr[0].void_refno).order_by('pk').first()
+        if sa_ids:
+            void_refno = sa_ids.sa_transacno_ref
+                   
     else:
         showvoidreason = False
 
@@ -500,7 +513,7 @@ def GeneratePDF(self,request, sa_transacno):
     'date':date,'time':dtime,'percent':int(gst.item_value) if gst and gst.item_value else "0" ,'path':path if path else '','title':title if title else None,
     'packages': str(packages),'site':site,'treatment': treatopen_ids,'settings': set_obj,
     'tot_price':tot_price,'prepaid_balance': prepaid_amt,
-    'creditnote_balance': credit_amt,'total_netprice':str("{:.2f}".format((total_netprice))),
+    'creditnote_balance': credit_amt,'voucher_balance': voucher_amt,'total_netprice':str("{:.2f}".format((total_netprice))),
     'custsign_ids':path_custsign if path_custsign else '','prepaid_lst':prepaid_lst,'prepaidlst':prepaidlst,
     'prepaidbal':prepaidbal,'treatmentbal':treatmentbal,'showprepaid': showprepaid,
     'showvoidreason':showvoidreason,'showcredit':showcredit,'creditlst': creditlst,
@@ -513,11 +526,12 @@ def GeneratePDF(self,request, sa_transacno):
     'discreason': discreason,'discper' : discper,'today_point_amt':today_point_amt,
     'cust_point_value' : int(hdr[0].sa_custnoid.cust_point_value) if hdr[0].sa_custnoid and hdr[0].sa_custnoid.cust_point_value and hdr[0].sa_custnoid.cust_point_value > 0 else 0,
     'title': title,'ot_seal':ot_seal if os.path.isfile(ot_seal) else '',
-    'ot_logo':ot_logo if os.path.isfile(ot_logo) else ''
+    'ot_logo':ot_logo if os.path.isfile(ot_logo) else '','void_refno' : void_refno
     }
     data.update(sub_data)
     data.update(custbal)
     if site.inv_templatename:
+        # template = get_template('customer_invoice_sincereskin.html')
         template = get_template(site.inv_templatename)
     else:
         template = get_template('customer_receipt.html')
@@ -527,12 +541,13 @@ def GeneratePDF(self,request, sa_transacno):
     display.start()
     html = template.render(data)
     options = {
-        'margin-top': '.25in',
-        'margin-right': '.25in',
-        'margin-bottom': '.25in',
-        'margin-left': '.25in',
+        'margin-top': '.20in',
+        'margin-right': '.20in',
+        'margin-bottom': '.20in',
+        'margin-left': '.20in',
         'encoding': "UTF-8",
         'no-outline': None,
+        'enable-local-file-access': ""
     }
     
     # existing = os.listdir(settings.PDF_ROOT)
